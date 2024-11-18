@@ -1,0 +1,17 @@
+# github.com/antlr/antlr4 v0.0.0-20201029161626-9a95f0cc3d7c
+## explicit
+github.com/antlr/antlr4/runtime/Go/antlr
+# github.com/davecgh/go-spew v1.1.1
+## explicit
+github.com/davecgh/go-spew/spew
+# github.com/mattn/go-runewidth v0.0.3
+github.com/mattn/go-runewidth
+# github.com/peterh/liner v1.2.0
+## explicit
+github.com/peterh/liner
+# github.com/willf/bitset v1.1.11
+## explicit
+github.com/willf/bitset
+# gopkg.in/karalabe/cookiejar.v1 v1.0.0-20141109175019-e1490cae028c
+## explicit
+gopkg.in/karalabe/cookiejar.v1/collections/deque
