@@ -37,6 +37,7 @@ var (
 //  1. A -> B using GossipDigestSynMessage.
 //  2. B -> A using GossipDigestAckMessage.
 //  3. A -> B using GossipDigestAck2Message.
+//
 // When this module heads from one of the above messages,
 // it will update the FailureDetector with the liveness
 // information.
@@ -51,11 +52,11 @@ type Gossiper struct {
 
 	localEndPoint        *network.EndPoint
 	aVeryLongTime        int64
-	preIdx               int // index used previously
-	rrIdx                int // round robin index through live endpoint set
-	liveEndpoints        map[network.EndPoint]bool
-	unreachableEndpoints map[network.EndPoint]bool
-	seeds                map[network.EndPoint]bool
+	preIdx               int                       // index used previously
+	rrIdx                int                       // round-robin index through live endpoint set
+	liveEndpoints        map[network.EndPoint]bool // 活动节点
+	unreachableEndpoints map[network.EndPoint]bool // 不可达节点
+	seeds                map[network.EndPoint]bool // 种子节点
 	endPointStateMap     map[network.EndPoint]*EndPointState
 	subscribers          []IEndPointStateChangeSubscriber
 	rnd                  *rand.Rand
@@ -135,6 +136,7 @@ func (g *Gossiper) startControlServer() {
 	// ===== workaround ==========
 	http.DefaultServeMux = oldMux
 	// ===========================
+
 	hostname, err := os.Hostname()
 	if err != nil {
 		log.Fatal(err)
@@ -149,21 +151,32 @@ func (g *Gossiper) startControlServer() {
 }
 
 // RunTimerTask starts the periodic task for a gossiper
+// 定期运行以执行 Gossip 过程
 func (g *Gossiper) RunTimerTask() {
-	// currently it runs every 1 min
 	for {
 		g.runTask()
 		time.Sleep(time.Millisecond * time.Duration(g.intervalInMillis))
 	}
 }
 
+// 创建 Gossip 摘要，并向活动和不可达成员以及种子节点发送 Gossip 消息。
 func (g *Gossiper) runTask() {
 	log.Printf("gossiper is running the timer task...\n")
 	g.mu.Lock()
 	defer g.mu.Unlock()
+
+	// 更新本端点心跳
 	g.endPointStateMap[*g.localEndPoint].GetHeartBeatState().UpdateHeartBeat()
+
+	// 生成一个包含本地端点和活跃端点的随机化 gossip 摘要
 	gDigests := make([]*GossipDigest, 0)
 	g.makeRandomGossipDigest(gDigests)
+
+	// 将 gossip 摘要转换成一个 GossipDigestSynMessage 消息：
+	//  - 发送给一个随机的活跃端点
+	//	- 发送给一个随机的不可达端点（概率）
+	//  - 发送给一个随机的种子端点（条件&概率）
+	//	- 移除那些已经长时间不可达的端点
 	if len(gDigests) > 0 {
 		message := g.makeGossipDigestSynMessage(gDigests)
 		// gossip to some random live member
@@ -184,6 +197,7 @@ func getCurrentTimeInMillis() int64 {
 	return time.Now().UnixNano() / int64(time.Millisecond)
 }
 
+// 检查和更新网络中端点的状态，移除那些已经长时间不可达的端点。
 func (g *Gossiper) doStatusCheck() {
 	for endpoint := range g.endPointStateMap {
 		if endpoint == *g.localEndPoint {
@@ -212,16 +226,20 @@ func (g *Gossiper) doGossipToSeed(message *GossipDigestSynArgs) {
 	if size == 0 {
 		return
 	}
+
+	// 如果本地端点是唯一的种子端点（即 size == 1 && ok），那么直接返回，不进行 gossip 操作。
 	_, ok := g.seeds[*g.localEndPoint]
 	if size == 1 && ok {
 		return
 	}
 	log.Printf("gossip to seeds: %v\n", g.seeds)
+
+	// 当没有活跃端点时，直接向种子端点发送 gossip 消息，否则基于概率决定是否向种子端点发送。
 	if len(g.liveEndpoints) == 0 {
 		log.Printf("# of live endpoints is 0, gossip to seed\n")
 		g.sendGossip(message, g.seeds)
 	} else {
-		// gossip with the seed with some probability
+		// 概率值 prob 是种子端点数量与活跃端点和不可达端点数量之和的比例，用来确定是否将消息发送到种子端点。
 		prob := float64(len(g.seeds)) / float64(len(g.liveEndpoints)+len(g.unreachableEndpoints))
 		randDbl := g.rnd.Float64()
 		log.Printf("gossip with probability: %v <= %v?\n", randDbl, prob)
@@ -231,6 +249,7 @@ func (g *Gossiper) doGossipToSeed(message *GossipDigestSynArgs) {
 	}
 }
 
+// 向不可达节点发送 gossip 消息，检查这些节点是否已经恢复或重连到网络。
 func (g *Gossiper) doGossipToUnreachableMember(message *GossipDigestSynArgs) {
 	// sends a gossip message to an unreachable member
 	liveEndPoints := len(g.liveEndpoints)
@@ -238,6 +257,7 @@ func (g *Gossiper) doGossipToUnreachableMember(message *GossipDigestSynArgs) {
 	if unreachableEndPoints == 0 {
 		return
 	}
+	// 概率值 prob 基于不可达端点的数量与活跃端点数量的比值。
 	prob := float64(unreachableEndPoints) / (float64(liveEndPoints + 1))
 	randDbl := g.rnd.Float64()
 	if randDbl < prob {
@@ -253,39 +273,51 @@ func (g *Gossiper) doGossipToLiveMember(message *GossipDigestSynArgs) bool {
 	return g.sendGossip(message, g.liveEndpoints)
 }
 
+// 将一个 GossipDigestSynArgs 消息发送到一个随机选择的活跃网络端点。
 func (g *Gossiper) sendGossip(message *GossipDigestSynArgs, epSet map[network.EndPoint]bool) bool {
 	size := len(g.liveEndpoints)
-	// generate a random number in [0,size)
 	liveEndPoints := make([]network.EndPoint, size)
 	for ep := range epSet {
 		liveEndPoints = append(liveEndPoints, ep)
 	}
+
+	// 从 epSet 中随机选择一个端点
 	var index int
 	if size == 1 {
 		index = 0
 	} else {
-		index = g.rnd.Intn(size)
+		index = g.rnd.Intn(size) // generate a random number in [0,size)
 	}
 	to := liveEndPoints[index]
 	log.Printf("Sending a GossipDigestSynMessage to %v ...\n", to)
+
+	// 异步调用 RPC 发送 Gossip 消息
 	reply := &GossipDigestSynReply{}
 	client, err := rpc.DialHTTP("udp", to.HostName+":"+config.ControlPort)
 	if err != nil {
 		log.Fatal("dialing: ", err)
 	}
 	client.Go("Gossiper.OnGossipDigestSyn", message, reply, nil)
+
+	// 检查是否为种子端点，如果是种子端点返回 true，否则返回 false
 	_, ok := g.seeds[to]
 	return ok
 }
 
+// 生成一个包含多个端点（包括本地端点和活跃端点）信息的 gossip 摘要列表。
+//   - 对于每个端点（包括本地端点和活跃端点），通过查询状态生成相应的 generation 和 maxVersion，并添加到 gDigests 列表中。
+//   - 因为 map 的遍历是随机的，这里相当于对活跃端点进行了 shuffle ，这样可以使节点间交换的信息更加多样化，增强了 gossip 协议的效果。
 func (g *Gossiper) makeRandomGossipDigest(gDigests []*GossipDigest) {
 	// the gossip digest is built based on randomization rather than
 	// just looping through the collection of live endpoints.
+	// 获取本端状态
 	epState := g.endPointStateMap[*g.localEndPoint]
 	generation := int(epState.GetHeartBeatState().generation)
 	maxVersion := getMaxEndPointStateVersion(epState)
+	// 创建本端点的 gossip 摘要，添加到 gDigests 中
 	gDigests = append(gDigests, NewGossipDigest(*g.localEndPoint, generation, maxVersion))
 	// map is unsorted, so we omit the shuffle here
+	// 遍历活跃的端点并生成 gossip 摘要，添加到 gDigests 中
 	for liveEndPoint := range g.liveEndpoints {
 		epState, ok := g.endPointStateMap[liveEndPoint]
 		if ok {
@@ -298,6 +330,10 @@ func (g *Gossiper) makeRandomGossipDigest(gDigests []*GossipDigest) {
 	}
 }
 
+// 获取一个端点状态（EndPointState）的最大版本号。
+//   - 首先，它从心跳状态（HeartBeatState）中获取版本号，并添加到版本号列表中。
+//   - 然后，遍历 applicationState 提取每个 app state 的版本号并添加到列表。
+//   - 最后，所有版本号被排序，并返回最大的版本号。
 func getMaxEndPointStateVersion(epState *EndPointState) int {
 	versions := make([]int, 0)
 	versions = append(versions, int(epState.GetHeartBeatState().GetVersion()))
@@ -345,6 +381,7 @@ func (g *Gossiper) doNotifications(addr network.EndPoint, epState *EndPointState
 	}
 }
 
+// isAlive 用于更新一个端点的存活状态，并根据状态更新 Gossiper 内部的存活和不可达端点列表。
 func (g *Gossiper) isAlive(addr network.EndPoint, epState *EndPointState, value bool) {
 	epState.SetAlive(value)
 	if value {

@@ -12,8 +12,8 @@ import (
 // IFailureDetectionEventListener provides an interface
 // for fd event listener
 type IFailureDetectionEventListener interface {
-	// convict the specified endpoint
+	// Convict the specified endpoint
 	Convict(ep network.EndPoint)
-	// suspect the specified endpoint
+	// Suspect the specified endpoint
 	Suspect(ep network.EndPoint)
 }

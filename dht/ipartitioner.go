@@ -8,7 +8,7 @@ package dht
 // IPartitioner ...
 type IPartitioner interface {
 	DecorateKey(key string) string
-	UndecorateKey(decoreateddKey string) string
+	UndecorateKey(decoratedKey string) string
 	Compare(s1, s2 string) int
 	GetToken(key string) string
 }

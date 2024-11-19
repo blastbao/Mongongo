@@ -11,6 +11,8 @@ import "github.com/DistAlchemist/Mongongo/network"
 // specified list of EndPoints and the largest
 // version of the state they have generated as
 // known by the local endpoint.
+//
+// 节点摘要，用于节点间交换状态信息
 type GossipDigest struct {
 	endPoint   network.EndPoint
 	generation int

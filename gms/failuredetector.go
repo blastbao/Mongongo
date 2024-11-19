@@ -18,18 +18,19 @@ import (
 
 var failureDetector IFailureDetector
 
+// FailureDetector 通过监测某个端点的心跳（即请求间隔时间）来判断该端点是否存活，并基于一定的阈值来判断该端点是否故障。
+
 // FailureDetector implements IFailureDetector
 type FailureDetector struct {
 	sampleSize      int
-	phiSuspectThres int
-	phiConvictThres int
-	// Failure Detector has to have been up for at least
-	// 1 min.
-	uptimeThres int64
+	phiSuspectThres int // phi 可疑阈值，超过该阈值，系统将怀疑该端点可能故障。
+	phiConvictThres int // phi 确认阈值，超过该阈值，系统将认为该端点已经故障。
+	// Failure Detector has to have been up for at least 1 min.
+	uptimeThres int64 // 故障检测器运行的最小时间，单位为毫秒（1分钟）。
 	// Time when the module was instantiated.
-	creationTime     int64
-	fdEventListeners []IFailureDetectionEventListener
-	arrivalSamples   map[network.EndPoint]*ArrivalWindow
+	creationTime     int64                               // 故障检测器创建时的时间戳
+	fdEventListeners []IFailureDetectionEventListener    // 事件监听器
+	arrivalSamples   map[network.EndPoint]*ArrivalWindow //
 }
 
 // GetFailureDetector will create a new instance
@@ -53,6 +54,7 @@ func newFailureDetector() *FailureDetector {
 }
 
 // IsAlive check whether the endpoint is up.
+// 判断指定的端点是否存活。
 func (f *FailureDetector) IsAlive(ep network.EndPoint) bool {
 	localHost, err := os.Hostname()
 	if err != nil {
@@ -66,6 +68,7 @@ func (f *FailureDetector) IsAlive(ep network.EndPoint) bool {
 	return epState.IsAlive()
 }
 
+// 记录心跳。
 func (f *FailureDetector) report(ep network.EndPoint) {
 	log.Printf("reporting %v\n", ep)
 	now := float64(getCurrentTimeInMillis())
@@ -77,6 +80,7 @@ func (f *FailureDetector) report(ep network.EndPoint) {
 	heartbeatWindow.Add(now)
 }
 
+// 根据 phi 值判断端点是否可能故障。
 func (f *FailureDetector) interpret(ep network.EndPoint) {
 	hbWnd, ok := f.arrivalSamples[ep]
 	if ok == false {
@@ -114,9 +118,10 @@ func (f *FailureDetector) UnregisterEventListener(listener IFailureDetectionEven
 }
 
 // ArrivalWindow ...
+// 窗口
 type ArrivalWindow struct {
-	tLast            float64
-	arrivalIntervals *utils.BoundedStatsDeque
+	tLast            float64                  // 上一个心跳时间戳
+	arrivalIntervals *utils.BoundedStatsDeque // 保存心跳历史
 }
 
 // NewArrivalWindow ...
@@ -170,6 +175,8 @@ func (p *ArrivalWindow) Clear() {
 }
 
 // P ...
+//
+// P(t) 计算的是一个指数衰减的概率，表示一个端点在特定时间后仍然存活的概率。
 func (p *ArrivalWindow) P(t float64) float64 {
 	mean := p.Mean()
 	exponent := -1 * t / mean
@@ -177,6 +184,12 @@ func (p *ArrivalWindow) P(t float64) float64 {
 }
 
 // Phi ...
+//
+// Phi 通常用于故障检测中判断端点是否可能发生故障。
+// Phi 通过对心跳间隔进行分析，得出一个基于时间和间隔分布的统计值。
+// Phi 的计算依赖于 P(t) 的值，通过 math.Log10(prob) 转换为 phi 值。
+// phi 是一个重要的指标，表示端点的心跳模式是否异常。
+// 通常情况下，如果 phi 值较大，表示端点可能出现故障。
 func (p *ArrivalWindow) Phi(tnow int64) float64 {
 	size := p.arrivalIntervals.Size()
 	res := float64(0)

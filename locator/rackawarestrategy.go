@@ -11,7 +11,6 @@ import (
 
 // RackAwareStrategy implements RackStrategy interface
 type RackAwareStrategy struct {
-	//
 	// *RackStrategy
 	TokenMetadata *TokenMetadata
 }
