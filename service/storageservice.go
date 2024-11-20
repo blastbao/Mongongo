@@ -157,7 +157,6 @@ func (ss *StorageService) startControlServer() {
 
 // Start will setup RPC server for storage service
 func (ss *StorageService) Start() {
-
 	ss.initPartitioner()
 	ss.storageMetadata = db.GetManagerInstance().Start()
 	ss.tcpAddr = network.NewEndPoint(config.StoragePort)

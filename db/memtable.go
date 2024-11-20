@@ -168,12 +168,14 @@ func (m *Memtable) getSliceIterator(filter *SliceQueryFilter) ColumnIterator {
 	if filter.reversed == true {
 		reverse(columns)
 	}
+
 	var startIColumn IColumn
 	if config.GetColumnTypeTableName(m.tableName, filter.path.ColumnFamilyName) == "Standard" {
 		startIColumn = NewColumn(string(filter.start), "", 0, false)
 	} else {
 		startIColumn = NewSuperColumn(string(filter.start))
 	}
+
 	index := 0
 	if len(filter.start) == 0 && filter.reversed {
 		// scan from the largest column in descending order
@@ -183,6 +185,7 @@ func (m *Memtable) getSliceIterator(filter *SliceQueryFilter) ColumnIterator {
 			return columns[i].getName() >= startIColumn.getName()
 		})
 	}
+
 	startIndex := index
 	return NewAColumnIterator(startIndex, columnFamily, columns)
 }

@@ -36,8 +36,7 @@ var (
 	memtablesPendingFlush = make(map[string][]*Memtable)
 )
 
-// ColumnFamilyStore provides storage specification of
-// column family
+// ColumnFamilyStore provides storage specification of column family
 type ColumnFamilyStore struct {
 	threshold             int
 	bufSize               int

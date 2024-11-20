@@ -113,14 +113,14 @@ func NewColumnGroupReader(ssTable *SSTableReader, key string, position int64, st
 	if key != keyInDisk {
 		log.Fatal("key should equals to keyInDisk")
 	}
-	readInt(c.file)         // read row size
-	skipBloomFilter(c.file) // skip bloom filter
-	c.indices = deserializeIndex(c.file)
+	readInt(c.file)                      // 读取一个 uint32 // read row size
+	skipBloomFilter(c.file)              // 跳过布隆过滤器 // skip bloom filter
+	c.indices = deserializeIndex(c.file) // 从索引文件中反序列化得到 IndexInfo 数组
 
 	c.emptyColumnFamily = CFSerializer.deserializeFromSSTableNoColumns(ssTable.makeColumnFamily(), c.file)
 	readInt(c.file) // column count
 	c.columnStartPosition = getCurrentPos(c.file)
-	c.curRangeIndex = indexFor(startColumn, c.indices, reversed)
+	c.curRangeIndex = indexFor(startColumn, c.indices, reversed) // 查找列名 startColumn 在索引 c.indices 归属的索引块
 	c.reversed = reversed
 	if reversed && c.curRangeIndex == len(c.indices) {
 		c.curRangeIndex--

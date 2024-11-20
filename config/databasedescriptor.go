@@ -166,6 +166,7 @@ var (
 
 	// HashingStrategy : Random or OPHF
 	HashingStrategy = Random
+
 	// MinCompactionThres ...
 	MinCompactionThres = 4
 	// MaxCompactionThres ...

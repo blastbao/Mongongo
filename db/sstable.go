@@ -208,18 +208,23 @@ func readBool(file *os.File) (bool, int) {
 }
 
 func readBytes(file *os.File) ([]byte, int) {
+	// 字节数组长度，4B
 	size := readInt(file)
+	// 读取 size 长度的 data ，返回总长度
 	b := make([]byte, size)
 	file.Read(b)
 	return b, size + 4
 }
 
 func readString(file *os.File) (string, int64) {
+	// 字符串长度，4B
 	size := int(readInt32(file))
 	bs := make([]byte, size)
+	// 读取 size 长度的 data ，返回总长度
 	return readBlockIdxKey(file, bs), int64(size + 4)
 }
 
+// 从 file 中读取指定大小 len(b) 的字节数据，并以字符串格式返回
 func readBlockIdxKey(file *os.File, b []byte) string {
 	n, err := file.Read(b)
 	if err != nil {

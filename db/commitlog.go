@@ -343,6 +343,9 @@ func writeBytes(file *os.File, b []byte) int {
 	return 4 + len(b)
 }
 
+// +-------------------+-------------------------------+
+// | 4字节长度信息       | 数据内容                       |
+// +-------------------+-------------------------------+
 func writeBytesB(buf []byte, b []byte) int {
 	// write byte length
 	b4 := make([]byte, 4)

@@ -12,11 +12,15 @@ import (
 
 // AColumnFactory -> Abstract Column Factory
 // ColumnFactory and SuperColumnFactory are two specific impl.
+//
+// 创建不同类型的列（Column 和 SuperColumn）
 type AColumnFactory interface {
 	createColumn(name, value string, timestamp int64) IColumn
 }
 
 // ColumnFactory implements AColumnFactory
+//
+// 创建普通列
 type ColumnFactory struct{}
 
 func (f ColumnFactory) createColumn(name, value string, timestamp int64) IColumn {
@@ -26,6 +30,8 @@ func (f ColumnFactory) createColumn(name, value string, timestamp int64) IColumn
 }
 
 // SuperColumnFactory implements AColumnFactory
+//
+// 创建超级列
 type SuperColumnFactory struct{}
 
 func (f SuperColumnFactory) createColumn(name, value string, timestamp int64) IColumn {

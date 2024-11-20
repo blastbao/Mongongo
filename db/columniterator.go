@@ -5,18 +5,20 @@
 
 package db
 
+// 当一个列族包含多个列时，使用 ColumnIterator 可以顺序访问这些列数据；
+
 // ColumnIterator ...
 type ColumnIterator interface {
-	getColumnFamily() *ColumnFamily
-	close()
-	hasNext() bool
-	next() IColumn
+	getColumnFamily() *ColumnFamily // 返回与当前列迭代器关联的列族
+	close()                         // 关闭当前迭代器，释放资源
+	hasNext() bool                  // 判断是否还有下一个元素
+	next() IColumn                  // 返回下一个列对象
 }
 
 // SimpleColumnIterator ...
 type SimpleColumnIterator struct {
-	curIndex     int
-	columnFamily *ColumnFamily
+	curIndex     int           // 迭代器指向的列索引
+	columnFamily *ColumnFamily // 迭代器所在的列族
 	columns      [][]byte
 }
 
@@ -54,8 +56,7 @@ type AbstractColumnIterator struct {
 }
 
 // NewAColumnIterator ...
-func NewAColumnIterator(curIndex int, columnFamily *ColumnFamily,
-	columns []IColumn) *AbstractColumnIterator {
+func NewAColumnIterator(curIndex int, columnFamily *ColumnFamily, columns []IColumn) *AbstractColumnIterator {
 	c := &AbstractColumnIterator{}
 	c.curIndex = curIndex
 	c.columnFamily = columnFamily

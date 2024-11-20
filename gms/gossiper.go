@@ -364,14 +364,16 @@ func (g *Gossiper) Convict(endpoint network.EndPoint) {
 
 // Suspect implements IFailureDetectionEventListener interface
 // it is invoked by the Failure Detector when it suspects an end point
-func (g *Gossiper) Suspect(endpoint network.EndPoint) {
-	epState := g.endPointStateMap[endpoint]
+//
+// 如果端点 ep 当前是 alive 状态，现在怀疑已经 dead ，则通过 doNotifications 方法通知其他系统或组件该端点的状态改变。
+func (g *Gossiper) Suspect(ep network.EndPoint) {
+	epState := g.endPointStateMap[ep]
 	if epState.isAlive {
-		log.Printf("EndPoint %v is not dead\n", endpoint)
-		g.isAlive(endpoint, epState, false)
+		log.Printf("EndPoint %v is not dead\n", ep)
+		g.isAlive(ep, epState, false)
 		// notify an endpoint is dead to interested parties
 		deltaState := NewEndPointState(epState.GetHeartBeatState())
-		g.doNotifications(endpoint, deltaState)
+		g.doNotifications(ep, deltaState)
 	}
 }
 
@@ -381,7 +383,7 @@ func (g *Gossiper) doNotifications(addr network.EndPoint, epState *EndPointState
 	}
 }
 
-// isAlive 用于更新一个端点的存活状态，并根据状态更新 Gossiper 内部的存活和不可达端点列表。
+// isAlive 用于更新一个端点的存活状态(value=true => alive )，并根据状态更新 Gossiper 内部的存活和不可达端点列表。
 func (g *Gossiper) isAlive(addr network.EndPoint, epState *EndPointState, value bool) {
 	epState.SetAlive(value)
 	if value {

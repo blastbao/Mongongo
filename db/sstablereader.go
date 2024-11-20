@@ -158,9 +158,12 @@ func (s *SSTableReader) getPosition(decoratedKey string) int64 {
 	// returns the position in the data file to
 	// find the given key, or -1 if the key is not
 	// present
+	//
+	// false 则一定不存在
 	if s.bf.IsPresent(decoratedKey) == false {
 		return -1
 	}
+
 	start := s.getIndexScanPosition(decoratedKey)
 	if start < 0 {
 		return -1

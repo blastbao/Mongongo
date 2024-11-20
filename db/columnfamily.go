@@ -15,15 +15,15 @@ import (
 
 // ColumnFamily definition
 type ColumnFamily struct {
-	ColumnFamilyName  string
-	ColumnType        string
-	Factory           AColumnFactory
-	Columns           map[string]IColumn
-	size              int32
-	deleteMark        bool
-	localDeletionTime int
-	markedForDeleteAt int64
-	columnSerializer  IColumnSerializer
+	ColumnFamilyName  string             // 列族名
+	ColumnType        string             // 列族类型
+	Factory           AColumnFactory     // 列族工厂，负责创建列或超级列
+	Columns           map[string]IColumn // 列族中的列
+	size              int32              // 列族的总大小
+	deleteMark        bool               // 列族是否被删除
+	localDeletionTime int                // 本地删除时间
+	markedForDeleteAt int64              // 删除时间
+	columnSerializer  IColumnSerializer  // 序列化器，负责列数据的序列化和反序列化
 }
 
 var typeToColumnFactory = map[string]AColumnFactory{
@@ -32,6 +32,10 @@ var typeToColumnFactory = map[string]AColumnFactory{
 }
 
 // NewColumnFamily create a new column family, set columnfactory according to its type
+//
+// NewColumnFamily 用于创建新的列族对象。
+//   - 根据列族类型，选择合适的列族工厂（ColumnFactory 或 SuperColumnFactory）。
+//   - 根据列族类型，选择合适的列序列化器（ColumnSerializer 或 SuperColumnSerializer）。
 func NewColumnFamily(columnFamilyName, columnType string) *ColumnFamily {
 	cf := &ColumnFamily{}
 	cf.ColumnFamilyName = columnFamilyName
@@ -58,9 +62,7 @@ func (cf *ColumnFamily) CreateColumn(columnName, value string, timestamp int64) 
 	cf.addColumn(column)
 }
 
-// If we find and old column that has the same
-// name, then ask it to resolve itself, else
-// we add the new column
+// If we find and old column that has the same name, then ask it to resolve itself, else we add the new column
 func (cf *ColumnFamily) addColumn(column IColumn) {
 	name := column.getName()
 	oldColumn, ok := cf.Columns[name]

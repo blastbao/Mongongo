@@ -45,6 +45,7 @@ func NewSSTableNamesIterator(sstable *SSTableReader, key string, columns [][]byt
 			filteredColumnNames = append(filteredColumnNames, name)
 		}
 	}
+
 	if len(filteredColumnNames) == 0 {
 		return r
 	}
@@ -54,30 +55,37 @@ func NewSSTableNamesIterator(sstable *SSTableReader, key string, columns [][]byt
 	ranges := make([]*IndexInfo, 0)
 	// get the various column ranges we have to read
 	for _, name := range filteredColumnNames {
+		// 查找列 name 在哪个索引块中
 		index := indexFor(name, indexList, false)
+		// 不存在
 		if index == len(indexList) {
 			continue
 		}
+		// 不合法
 		indexInfo := indexList[index]
 		if string(name) < string(indexInfo.firstName) {
 			continue
 		}
+		// 找到目标索引块
 		ranges = append(ranges, indexInfo)
 	}
+
 	// seek to the correct offset to the data
 	columnBegin := getCurrentPos(file)
 	// now read all the columns from the ranges
 	for _, indexInfo := range ranges {
+		// 定位到索引块指向的存储偏移
 		file.Seek(columnBegin+indexInfo.offset, 0)
+		// 从 file 中不断读取 column ，找到目标 column 存入 cf 中
 		for getCurrentPos(file) < columnBegin+indexInfo.offset+indexInfo.width {
 			column := cf.getColumnSerializer().deserialize(file)
-			// we check vs the origin list, not the filtered list
-			// for efficiency
+			// we check vs the origin list, not the filtered list for efficiency
 			if containsC(columns, column.getName()) {
 				cf.addColumn(column)
 			}
 		}
 	}
+
 	file.Close()
 	r.iter = cf.GetSortedColumns()
 	return r

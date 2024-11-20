@@ -15,11 +15,11 @@ import (
 
 // Column stores name and value etc.
 type Column struct {
-	Name       string
-	Value      string
-	Timestamp  int64
-	size       int32
-	deleteMark bool
+	Name       string // 列名
+	Value      string // 列值
+	Timestamp  int64  // 时间戳
+	size       int32  // 列大小，未在代码中使用
+	deleteMark bool   // 删除标记，表示该列是否被删除
 }
 
 func (c Column) addColumn(column IColumn) {
@@ -73,6 +73,7 @@ func (c Column) getSize() int32 {
 	}
 }*/
 
+// 如果 column 的时间戳较新，则将当前列的 Value 和 Timestamp 更新为新 column 的值。
 func (c Column) repair(column Column) {
 	if c.Timestamp < column.Timestamp {
 		c.Value = column.Value
@@ -80,6 +81,7 @@ func (c Column) repair(column Column) {
 	}
 }
 
+// 比较当前列和 column 的时间戳，若 column 的时间戳较新，则返回一个新列，包含 column 的 Name、Value 和 Timestamp。
 func (c Column) diff(column Column) Column {
 	var columnDiff Column
 	if c.Timestamp < column.Timestamp {
@@ -94,6 +96,7 @@ func getObjectCount() int {
 	return 1
 }
 
+// 将列转换为字符串，格式为：{Name}:{Timestamp}:{ValueLength}:{Value}
 func (c Column) toString() string {
 	var buffer bytes.Buffer
 	buffer.WriteString(c.Name)
@@ -109,6 +112,7 @@ func (c Column) toString() string {
 	return buffer.String()
 }
 
+// 生成列的摘要，由 Name 和 Timestamp 组成。
 func (c Column) digest() string {
 	var buffer bytes.Buffer
 	buffer.WriteString(c.Name)
@@ -118,6 +122,8 @@ func (c Column) digest() string {
 }
 
 // NewColumn constructs a Column
+//
+// 构造一个新的 Column，提供列名、值、时间戳和删除标记。
 func NewColumn(name, value string, timestamp int64, deleteMark bool) Column {
 	c := Column{}
 	c.Name = name
@@ -128,10 +134,15 @@ func NewColumn(name, value string, timestamp int64, deleteMark bool) Column {
 }
 
 // NewColumnKV ..
+//
+// NewColumnKV 是 NewColumn 的一个简化版本，仅使用列名和值，时间戳默认为 0，删除标记默认为 false 。
 func NewColumnKV(name, value string) Column {
 	return NewColumn(name, value, 0, false)
 }
 
+// toByteArray ..
+//
+// 将列转换为字节数组，格式包括：列名长度、列名、删除标记、时间戳、值长度和值。
 func (c Column) toByteArray() []byte {
 	buf := make([]byte, 0)
 	// write column name length
@@ -158,6 +169,7 @@ func (c Column) toByteArray() []byte {
 	return buf
 }
 
+// 计算并返回列的序列化大小，包括列名长度(4)、列名(n)、删除标记(1)、时间戳(8)、值长度(4)和列值(n)的字节数。
 func (c Column) serializedSize() uint32 {
 	// 4 byte: length of column name
 	// # bytes: column name bytes
@@ -181,6 +193,7 @@ func (c Column) GetTimestamp() int64 {
 	return c.Timestamp
 }
 
+// 比较两个列的优先级，优先级基于时间戳和是否标记为删除。如果列被标记为删除（Tombstone），则它的优先级更高。
 func (c Column) comparePriority(o Column) int64 {
 	if c.isMarkedForDelete() {
 		// tombstone always wins ties
@@ -192,6 +205,7 @@ func (c Column) comparePriority(o Column) int64 {
 	return c.Timestamp - o.Timestamp
 }
 
+// 将传入的列与当前列进行比较，根据时间戳决定是否更新当前列。如果传入列的时间戳较新，则返回 false，否则返回 true。
 func (c Column) putColumn(column IColumn) bool {
 	// resolve the column by comparing timestamps.
 	// if a newer value is being put, take the change.
@@ -218,6 +232,7 @@ func (c Column) GetName() string {
 	return c.Name
 }
 
+// 这些方法表示列的子列，这些操作不被支持，会直接抛出错误。
 func (c Column) getSubColumns() map[string]IColumn {
 	log.Fatal("This operation is not supported on simple columns")
 	return nil
@@ -237,6 +252,8 @@ func (c Column) mostRecentChangeAt() int64 {
 var CSerializer = NewColumnSerializer()
 
 // ColumnSerializer ...
+//
+// 用于列的序列化和反序列化
 type ColumnSerializer struct {
 	dummy int
 }
@@ -246,6 +263,7 @@ func NewColumnSerializer() *ColumnSerializer {
 	return &ColumnSerializer{0}
 }
 
+// 将列的字段（名称、删除标记、时间戳、值）序列化到文件中。
 func (c *ColumnSerializer) serialize(column IColumn, dos *os.File) {
 	writeString(dos, column.getName())
 	writeBool(dos, column.isMarkedForDelete())
@@ -253,6 +271,7 @@ func (c *ColumnSerializer) serialize(column IColumn, dos *os.File) {
 	writeBytes(dos, column.getValue()) // will first write byte length, the bytes
 }
 
+// 将列的字段（名称、删除标记、时间戳、值）序列化到字节数组中。
 func (c *ColumnSerializer) serializeB(column IColumn, dos []byte) {
 	writeStringB(dos, column.getName())
 	writeBoolB(dos, column.isMarkedForDelete())
@@ -260,6 +279,7 @@ func (c *ColumnSerializer) serializeB(column IColumn, dos []byte) {
 	writeBytesB(dos, column.getValue()) // will first write byte length, the bytes
 }
 
+// 从文件中反序列化数据并返回一个新的列。
 func (c *ColumnSerializer) deserialize(dis *os.File) IColumn {
 	name, _ := readString(dis)
 	deleteMark, _ := readBool(dis)
