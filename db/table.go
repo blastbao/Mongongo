@@ -155,6 +155,8 @@ func (t *Table) getNumberOfColumnFamilies() int {
 // First adds the row to the commit log associated with this
 // table. Then the data associated with the individual column
 // families is also written to the column family store's memtable
+//
+// [重要]
 func (t *Table) apply(row *Row) {
 	key := row.Key
 	// add row to commit log

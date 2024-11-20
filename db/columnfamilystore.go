@@ -702,7 +702,8 @@ func (c *ColumnFamilyStore) getColumnFamilyGC(filter QueryFilter, gcBefore int) 
 		nameFilter := NewNamesQueryFilter(
 			filter.getKey(),
 			NewQueryPathCF(c.columnFamilyName),
-			filter.getPath().SuperColumnName)
+			filter.getPath().SuperColumnName,
+		)
 		cf := c.getColumnFamily(nameFilter)
 		if cf == nil || cf.getColumnCount() == 0 {
 			return cf

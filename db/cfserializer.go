@@ -26,9 +26,9 @@ func NewCFSerializer() *ColumnFamilySerializer {
 }
 
 func (c *ColumnFamilySerializer) serialize(cf *ColumnFamily, dos []byte) {
-	writeStringB(dos, cf.ColumnFamilyName)
-	writeStringB(dos, cf.ColumnType)
-	c.serializeForSSTable(cf, dos)
+	writeStringB(dos, cf.ColumnFamilyName) // 列族名
+	writeStringB(dos, cf.ColumnType)       // 列族类型
+	c.serializeForSSTable(cf, dos)         //
 }
 
 func (c *ColumnFamilySerializer) deserializeFromSSTableNoColumns(cf *ColumnFamily, input *os.File) *ColumnFamily {
