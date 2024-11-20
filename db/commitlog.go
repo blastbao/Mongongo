@@ -41,13 +41,13 @@ import (
 // array and bitwise & it with the headers of the other commit logs
 // that are older.
 type CommitLog struct {
-	bufSize              int
-	table                string
-	logFile              string
-	clHeader             *CommitLogHeader
-	commitHeaderStartPos int64
-	forcedRollOver       bool
-	logWriter            *os.File
+	bufSize              int              // 缓冲区大小
+	table                string           // 关联表名
+	logFile              string           // 日志文件名
+	clHeader             *CommitLogHeader // 日志头，包含列族标记位和列族偏移量信息
+	commitHeaderStartPos int64            // 日志头的起始位置
+	forcedRollOver       bool             // 强制滚动
+	logWriter            *os.File         // 文件指针
 }
 
 var (
@@ -58,10 +58,13 @@ var (
 )
 
 // CommitLogContext represents the context of commit log
+//
+// CommitLogContext 用于追踪某个特定行（Row）在提交日志（Commit Log）中的位置。
+// 每次向提交日志中添加一行数据时（例如，在 add 方法中），都会生成一个 CommitLogContext 实例。
+// 通过 CommitLogContext，系统能够知道某个数据写入到日志中的确切位置，如果后续需要恢复数据或回滚操作，能够依据这些位置信息定位数据。
 type CommitLogContext struct {
-	file string
-	// offset within the Commit Log where this row was added
-	position int64
+	file     string // 日志文件名，如 CommitLog-1632123649000.log
+	position int64  // 在日志文件中的位置
 }
 
 // NewCommitLogContext creates a new commitLogContext
@@ -76,8 +79,10 @@ func (c *CommitLogContext) isValidContext() bool {
 	return c.position != -1
 }
 
+// 为下一个日志文件设置文件名，c.logFile = /path/to/logs/CommitLog-1616175872123.log
 func (c *CommitLog) setNextFileName() {
-	c.logFile = config.LogFileDir + string(os.PathSeparator) +
+	c.logFile = config.LogFileDir +
+		string(os.PathSeparator) +
 		"CommitLog-" +
 		strconv.FormatInt(time.Now().UnixNano()/int64(time.Millisecond), 10) +
 		".log"
@@ -150,9 +155,9 @@ func NewCommitLog(table string, recoveryMode bool) *CommitLog {
 	c.table = table
 	c.forcedRollOver = false
 	if !recoveryMode {
-		c.setNextFileName()
-		c.logWriter = createCLWriter(c.logFile)
-		c.writeCommitLogHeader()
+		c.setNextFileName()                     // 为下一个日志文件设置文件名
+		c.logWriter = createCLWriter(c.logFile) // 创建文件
+		c.writeCommitLogHeader()                //
 	}
 	return c
 }
@@ -215,22 +220,27 @@ func (c *CommitLog) seekAndWriteCommitLogHeader(bytes []byte) {
 }
 
 func writeCommitLogHeader(logWriter *os.File, bytes []byte) {
-	writeInt64(logWriter, int64(len(bytes)))
-	writeBytes(logWriter, bytes)
+	writeInt64(logWriter, int64(len(bytes))) // 长度
+	writeBytes(logWriter, bytes)             // 数据
 }
 
 // 检查当前日志文件的大小是否超过了指定的阈值，如果是，则滚动日志文件（即创建一个新的日志文件）。
 func (c *CommitLog) maybeRollLog() bool {
+	// 检查日志文件大小是否超过阈值
 	if getFileSize(c.logWriter) >= config.LogRotationThres {
-		// rolls the current log file over to a new one
+		// 设置下一个日志文件的名字
 		c.setNextFileName()
+		// 获取当前日志文件的名字
 		oldLogFile := c.logWriter.Name()
+		// 关闭当前日志文件
 		c.logWriter.Close()
-		// point reader/writer to a new commit log file
+		// 创建并打开新的日志文件
 		c.logWriter = createCLWriter(c.logFile)
 		// squirrel away the old commit log header
-		clHeaders[oldLogFile] = NewCommitLogHeaderC(c.clHeader)
-		c.clHeader.clear()
+		// ???
+		clHeaders[oldLogFile] = NewCommitLogHeaderC(c.clHeader) // 保存当前提交日志的头信息
+		c.clHeader.clear()                                      // 清空当前日志头信息
+		// 写入新的日志头信息
 		writeCommitLogHeader(c.logWriter, c.clHeader.toByteArray())
 		return true
 	}
@@ -245,18 +255,22 @@ func (c *CommitLog) maybeRollLog() bool {
 //
 // 向提交日志中添加一个新的行
 func (c *CommitLog) add(row *Row) *CommitLogContext {
-	curPos := int64(-1)
+	// 将传入的 row 对象序列化成字节数组
 	buf := make([]byte, 0)
-	// serialize the row
 	rowSerialize(row, buf)
-	curPos = getCurrentPos(c.logWriter)
-	cLogCtx := NewCommitLogContext(c.logFile, curPos)
-	// update header
+	// 获取 log 当前写入位置，创建 CommitLogContext
+	pos := getCurrentPos(c.logWriter)
+	logCtx := NewCommitLogContext(c.logFile, pos)
+	// 检查当前 row 的某个列族是否是第一次写入，如果是，会更新头
 	c.maybeUpdateHeader(row)
+	// 写入 row 数据长度
 	writeInt64(c.logWriter, int64(len(buf)))
+	// 写入 row 数据
 	writeBytes(c.logWriter, buf)
+	// 检查当前日志文件是否已经超过了设定的大小阈值。如果超过了阈值，就会触发日志文件的滚动（即创建一个新的日志文件，继续写入）。
 	c.maybeRollLog()
-	return cLogCtx
+	// 返回 CommitLogContext
+	return logCtx
 }
 
 // writeString will first write string length(int32)

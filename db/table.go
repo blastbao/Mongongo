@@ -25,18 +25,18 @@ var (
 
 // Table ...
 type Table struct {
-	//
 	tableMetadata      *TableMetadata
 	tableName          string
 	columnFamilyStores map[string]*ColumnFamilyStore
 }
 
 // OpenTable ...
+//
+// 通过表名获取一个 Table 实例。如果这个表还没有创建，会通过 NewTable 创建一个新的表实例并缓存。
 func OpenTable(table string) *Table {
 	tableInstance, ok := tableInstances[table]
 	if !ok {
-		// read config to know the column families for
-		// this table.
+		// read config to know the column families for this table.
 		tCreateLock.Lock()
 		defer tCreateLock.Unlock()
 		tableInstance = NewTable(table)
@@ -53,10 +53,11 @@ func getColumnFamilyCount() int {
 func NewTable(tableName string) *Table {
 	t := &Table{}
 	t.tableName = tableName
-	t.tableMetadata = getTableMetadataInstance(t.tableName)
+	t.tableMetadata = getTableMetadataInstance(t.tableName) // 获取该表的元数据（包括列族信息）。
 	t.columnFamilyStores = make(map[string]*ColumnFamilyStore)
 	cfIDMap := t.tableMetadata.cfIDMap
 	for columnFamily := range cfIDMap {
+		// 为每个列族创建一个 ColumnFamilyStore 实例，负责列族的数据管理。
 		t.columnFamilyStores[columnFamily] = NewColumnFamilyStore(tableName, columnFamily)
 	}
 	return t
@@ -164,11 +165,13 @@ func (t *Table) apply(row *Row) {
 	// cLogCtx := openCommitLog(t.tableName).add(row) // first write to commitlog
 	spew.Printf("table: %v \n -- table: %+v\n", t, t)
 	log.Printf("size: %v\n", t.tableMetadata.getSize())
+
 	cLogCtx := openCommitLogE().add(row) // first write to commitlog
 	for cName, columnFamily := range row.ColumnFamilies {
 		cfStore := t.columnFamilyStores[cName]
 		cfStore.apply(key, columnFamily, cLogCtx) // then write to memtable
 	}
+
 	// row.clear()
 	timeTaken := time.Now().UnixNano()/int64(time.Millisecond) - start
 	log.Printf("table.apply(row) took %v ms\n", timeTaken)

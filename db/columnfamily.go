@@ -125,6 +125,11 @@ func (cf *ColumnFamily) isMarkedForDelete() bool {
 	return cf.deleteMark
 }
 
+// 序列化过程：
+// - 列族名的长度和名称本身。
+// - 删除标记（如果该列族被标记为删除，则该字段为 1，否则为 0）。
+// - 列族中的列的数量。
+// - 列族中的每一列的序列化数据。
 func (cf *ColumnFamily) toByteArray() []byte {
 	buf := make([]byte, 0)
 	// write cf name length
@@ -165,7 +170,7 @@ func (cf *ColumnFamily) getColumnCount() int {
 }
 
 func (cf *ColumnFamily) addColumns(columnFamily *ColumnFamily) {
-	columns := cf.Columns
+	columns := columnFamily.Columns
 	for _, column := range columns {
 		cf.addColumn(column)
 	}

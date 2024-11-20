@@ -12,10 +12,10 @@ import (
 
 // Row for key and cf
 type Row struct {
-	Table          string
-	Key            string
-	ColumnFamilies map[string]*ColumnFamily
-	Size           int32
+	Table          string                   // 表名
+	Key            string                   // 主键
+	ColumnFamilies map[string]*ColumnFamily // 关联的列族，每个列族代表一组列的集合
+	Size           int32                    // 行的总大小可能包括所有列族和列族数据的大小）
 }
 
 // NewRow init a Row with given key
@@ -45,6 +45,10 @@ func (r *Row) addColumnFamily(cf *ColumnFamily) {
 	atomic.AddInt32(&r.Size, cf.getSize())
 }
 
+// 将当前行（Row）序列化为字节数组。
+//   - 写入 Key ：首先写入主键 Key 的长度（uint32 类型，4 字节），然后写入实际的 Key 字符串。
+//   - 写入列族数量：接着写入列族的数量。
+//   - 写入列族数据：如果行的大小大于 0（即包含列族数据），则遍历所有列族并将其序列化为字节数组后添加到 buf 中。
 func (r *Row) toByteArray() []byte {
 	buf := make([]byte, 0)
 	// write key length
@@ -69,6 +73,10 @@ func (r *Row) clear() {
 	r.ColumnFamilies = make(map[string]*ColumnFamily)
 }
 
+// 将一个 Row 对象序列化为字节数据，并将序列化结果写入 dos 中。
+//   - 将 Table/Key 写入 dos
+//   - 写入列族数目
+//   - 将每个列族序列化到 dos
 func rowSerialize(row *Row, dos []byte) {
 	writeStringB(dos, row.Table)
 	writeStringB(dos, row.Key)

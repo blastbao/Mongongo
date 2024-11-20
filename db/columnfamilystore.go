@@ -38,29 +38,34 @@ var (
 
 // ColumnFamilyStore provides storage specification of column family
 type ColumnFamilyStore struct {
-	threshold             int
-	bufSize               int
-	compactionMemoryThres int
-	tableName             string
-	columnFamilyName      string
+	threshold             int    // 内存表的阈值，超过此值会触发刷新。
+	bufSize               int    // 缓冲区大小，用于数据处理。
+	compactionMemoryThres int    // 压缩内存阈值，控制压缩操作的内存使用。
+	tableName             string // 表的名称。
+	columnFamilyName      string // 列族的名称。
+
 	// to generate the next index for a SSTable
-	fileIdxGenerator int32
-	readStats        []int64
-	writeStates      []int64
+	fileIdxGenerator int32   // 用于生成下一个 SSTable 文件的索引。
+	readStats        []int64 // 读操作的统计信息。
+	writeStates      []int64 // 写操作的统计信息。
+
 	// memtables associated with this cfStore
-	memtable       *Memtable
-	binaryMemtable *BinaryMemtable
+	memtable       *Memtable       // 当前使用的内存表。
+	binaryMemtable *BinaryMemtable // 二进制格式的内存表。
+
 	// SSTable on disk for this cf
 	// ssTables map[string]bool
-	ssTables map[string]*SSTableReader
+	ssTables map[string]*SSTableReader // 存储在磁盘上的 SSTable。
+
 	// modification lock used for protecting reads
 	// from compactions
-	rwmu      sync.RWMutex
-	memMu     sync.RWMutex
-	sstableMu sync.RWMutex
+	rwmu      sync.RWMutex // 读写锁，用于保护读操作免受压缩影响。
+	memMu     sync.RWMutex // 内存表的读写锁。
+	sstableMu sync.RWMutex // SSTable 的读写锁。
+
 	// flag indicates if a compaction is in process
-	isCompacting bool
-	isSuper      bool
+	isCompacting bool // 指示是否正在进行压缩操作。
+	isSuper      bool // 指示是否为超级列族。
 }
 
 // NewColumnFamilyStore initializes a new ColumnFamilyStore
@@ -109,15 +114,13 @@ func NewColumnFamilyStore(table, columnFamily string) *ColumnFamilyStore {
 }
 
 func getColumnFamilyFromFileName(filename string) string {
-	// filename is of format
-	//  <cf>-<index>-Data.db
+	// filename is of format: <cf>-<index>-Data.db
 	values := strings.Split(filename, "-")
 	return values[0]
 }
 
 func getIdxFromFileName(filename string) int {
-	// filename if of format:
-	//   <table>-<column family>-<index>-Data.db
+	// filename if of format: <table>-<cf>-<index>-Data.db
 	values := strings.Split(filename, "-")
 	if len(values) < 3 {
 		log.Fatal("Invalid filename")
@@ -135,11 +138,9 @@ type fileInfoList []os.FileInfo
 func (f fileInfoList) Len() int {
 	return len(f)
 }
-
 func (f fileInfoList) Less(i, j int) bool {
 	return f[i].ModTime().UnixNano() > f[j].ModTime().UnixNano()
 }
-
 func (f fileInfoList) Swap(i, j int) {
 	f[i], f[j] = f[j], f[i]
 }
@@ -195,48 +196,60 @@ func (c *ColumnFamilyStore) onStart() {
 	// TODO should also submit periodic flush
 }
 
+// 将一组文件按大小进行分组，使每个分组中的文件大小接近。
+// 通过分组，可以更有效地对文件进行后续的压缩操作，避免在压缩时将大小差异较大的文件混在一起，造成效率低下或不合理的资源消耗。
+//
+// 分组规则如下：
+// - 文件大小相近（当前文件大小在 [平均大小 / 2, 3 * 平均大小 / 2] 范围内）时，文件会被加入当前分组。
+// - 如果文件小于 50MB，且当前分组的平均文件大小也小于 50MB，也会被加入当前分组。
+// - 如果不符合以上条件，则创建新的分组。
 func (c *ColumnFamilyStore) stageOrderedCompaction(files []string) map[int][]string {
 	// stage the compactions, compact similar size files.
 	// this function figures out the files close enough by
 	// size and if they are greater than the threshold then
 	// compact
 	// sort the files based on the generation ID
-	sort.Sort(ByFileName(files))
+	sort.Sort(ByFileName(files)) // 文件名格式 <cf>-<index>-Data.db ，这里根据 index 进行排序。
 	buckets := make(map[int][]string)
 	maxBuckets := 1000
 	averages := make([]int64, maxBuckets)
 	min := int64(50 * 1024 * 1024)
 	i := 0
 	for _, file := range files {
+		// 打开文件
 		f, err := os.Open(file)
 		if err != nil {
 			log.Fatal(err)
 		}
+		// 文件大小
 		fileInfo, err := f.Stat()
 		if err != nil {
 			log.Fatal(err)
 		}
 		size := fileInfo.Size()
-		if (size > averages[i]/2 && size < 3*averages[i]/2) ||
-			(size < min && averages[i] < min) {
-			averages[i] = (averages[i] + size) / 2
-			fileList, ok := buckets[i]
-			if !ok {
-				fileList = make([]string, 0)
-				buckets[i] = fileList
+
+		// 判断当前文件是否可以加入到当前分组 i 中：
+		//	- 如果当前文件大小在 [average/2, average * 3/2] 范围内，则认为它属于这个分组。
+		//  - 如果文件大小小于 min，并且该分组的平均大小 average 也小于 min，则认为它也可以加入该分组。
+		if (size > averages[i]/2 && size < 3*averages[i]/2) || (size < min && averages[i] < min) {
+			averages[i] = (averages[i] + size) / 2 // 更新 average
+			if _, ok := buckets[i]; !ok {
+				buckets[i] = make([]string, 0)
 			}
-			fileList = append(fileList, file)
+			buckets[i] = append(buckets[i], file)
 		} else {
+			// 如果不符合条件，则创建新分组，此时，增加分组索引 i，并将该文件加入到新的分组中。
+			// 如果分组数已经超过了 maxBuckets，则退出循环（防止分组数量超过限制）。
 			if i >= maxBuckets {
 				break
 			}
 			i++
-			fileList := make([]string, 0)
-			buckets[i] = fileList
-			fileList = append(fileList, file)
+			buckets[i] = make([]string, 0)
+			buckets[i] = append(buckets[i], file)
 			averages[i] = size
 		}
 	}
+
 	return buckets
 }
 
@@ -259,7 +272,7 @@ func (p ByFileName) Swap(i, j int) {
 }
 
 func getIndexFromFileName(filename string) int {
-	// filename is of form <column family>-<index>-Data.db
+	// filename is of form <cf>-<index>-Data.db
 	tokens := strings.Split(filename, "-")
 	res, err := strconv.Atoi(tokens[len(tokens)-2])
 	if err != nil {
@@ -268,6 +281,7 @@ func getIndexFromFileName(filename string) int {
 	return res
 }
 
+// 计算传入的多个文件的总大小。
 func getExpectedCompactedFileSize(files []string) int64 {
 	// calculate total size of compacted files
 	expectedFileSize := int64(0)
@@ -286,6 +300,7 @@ func getExpectedCompactedFileSize(files []string) int64 {
 	return expectedFileSize
 }
 
+// 找出最大的文件，并返回该文件的路径。
 func getMaxSizeFile(files []string) string {
 	maxSize := int64(0)
 	maxFile := ""
@@ -316,6 +331,7 @@ func removeFromList(files []string, file string) {
 }
 
 // FPQ is a priority queue of FileStruct
+// 优先级队列，按照 FileStruct.row.key 排序，越小越靠前。
 type FPQ []*FileStruct
 
 // Len ...
@@ -324,11 +340,14 @@ func (pq FPQ) Len() int {
 }
 
 // Less ...
+// Less 方法定义如何比较两个 FileStruct 对象的大小(优先级)。
 func (pq FPQ) Less(i, j int) bool {
 	switch config.HashingStrategy {
 	case config.Ophf:
+		// 按字典顺序进行比较
 		return pq[i].row.key < pq[j].row.key
 	default:
+		// 将 row.key 按照 : 分割，只比较 : 前面的部分
 		lhs := strings.Split(pq[i].row.key, ":")[0]
 		rhs := strings.Split(pq[j].row.key, ":")[0]
 		return lhs < rhs
@@ -359,10 +378,12 @@ func (pq *FPQ) Pop() interface{} {
 func (c *ColumnFamilyStore) initPriorityQueue(files []string, ranges []*dht.Range, minBufferSize int) *FPQ {
 	pq := &FPQ{}
 	if len(files) > 1 || (ranges != nil && len(files) > 0) {
+		// 计算每个文件的缓冲区大小，compactionMemoryThres 表示进行压缩时分配的内存总量，分配给每个文件；
 		bufferSize := c.compactionMemoryThres / len(files)
-		if minBufferSize < bufferSize {
+		if bufferSize > minBufferSize {
 			bufferSize = minBufferSize
 		}
+		// 遍历每个文件，将符合条件的文件加入优先队列
 		for _, file := range files {
 			sstableReader, _ := openedFiles.get(file)
 			fs := sstableReader.getFileStruct()
@@ -509,17 +530,17 @@ func removeDeleted(cf *ColumnFamily, gcBefore int) *ColumnFamily {
 // if there are keys that occur in multiple files and are
 // the same then a resolution is done to get the latest data.
 func (c *ColumnFamilyStore) doFileCompaction(files []string, minBufferSize int) int {
-	// calculate the expected compacted filesize
+	// 计算传入的多个文件的总大小。
 	expectedCompactedFileSize := getExpectedCompactedFileSize(files)
 	compactionFileLocation := config.GetDataFileLocationForTable(c.tableName, expectedCompactedFileSize)
-	// if the compaction file path is empty, that
-	// means we have no space left for this compaction
+	// if the compaction file path is empty, that means we have no space left for this compaction
 	if compactionFileLocation == "" {
 		maxFile := getMaxSizeFile(files)
 		removeFromList(files, maxFile)
 		c.doFileCompaction(files, minBufferSize)
 		return 0
 	}
+
 	newfile := ""
 	startTime := time.Now().UnixNano() / int64(time.Millisecond)
 	totalBytesRead := int64(0)
@@ -757,9 +778,10 @@ func getUnflushedMemtables(cfName string) []*Memtable {
 	return getMemtablePendingFlushNotNull(cfName)
 }
 
+// 获取指定列族的所有待刷新 Memtables 。
 func getMemtablePendingFlushNotNull(columnFamilyName string) []*Memtable {
 	memtables, ok := memtablesPendingFlush[columnFamilyName]
-	if ok == false {
+	if !ok {
 		memtablesPendingFlush[columnFamilyName] = make([]*Memtable, 0)
 		// might not be the object we just put, if there was a race
 		memtables = memtablesPendingFlush[columnFamilyName]
@@ -777,17 +799,19 @@ func (c *ColumnFamilyStore) getColumnFamily(filter QueryFilter) *ColumnFamily {
 }
 
 func (c *ColumnFamilyStore) apply(key string, columnFamily *ColumnFamily, cLogCtx *CommitLogContext) {
-	// c.memtable.mu.Lock()
-	// defer c.memtable.mu.Unlock()
-	// c.memtable.put(key, columnFamily, cLogCtx)
 	start := getCurrentTimeInMillis()
+	// 1. 获取当前的 Memtable
 	initialMemtable := c.getMemtableThreadSafe()
+	// 2. 检查 Memtable 是否超过阈值，若超过把当前 memtable 落盘然后新建一个 memtable
 	if initialMemtable.isThresholdViolated() {
 		c.switchMemtableN(initialMemtable, cLogCtx)
 	}
+	// 3. 锁定 Memtable 操作，确保线程安全
 	c.memMu.Lock()
 	defer c.memMu.Unlock()
+	// 4. 将数据写入 Memtable
 	c.memtable.put(key, columnFamily)
+	// 5. 记录写操作的耗时
 	c.writeStates = append(c.writeStates, getCurrentTimeInMillis()-start)
 }
 
@@ -810,16 +834,22 @@ func (c *ColumnFamilyStore) getMemtableThreadSafe() *Memtable {
 // }
 
 func (c *ColumnFamilyStore) switchMemtableN(oldMemtable *Memtable, ctx *CommitLogContext) {
-	// N stands for new
+	// 锁定 Memtable 操作，确保线程安全
 	c.memMu.Lock()
 	defer c.memMu.Unlock()
+	// 如果 Memtable 已经被冻结，返回
 	if oldMemtable.isFrozen {
 		return
 	}
+	// 冻结 Memtable，防止进一步的修改
 	oldMemtable.freeze()
+	// 获取列族所有待刷新到磁盘的 Memtables
 	memtables := getMemtablePendingFlushNotNull(c.columnFamilyName)
+	// 将当前的 Memtable 添加到待刷新列表
 	memtables = append(memtables, oldMemtable)
+	// 提交刷新操作，将 Memtable 中的数据持久化到磁盘
 	submitFlush(oldMemtable, ctx)
+	// 创建新的 Memtable 来接收新的数据
 	c.memtable = NewMemtable(c.tableName, c.columnFamilyName)
 }
 
