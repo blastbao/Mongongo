@@ -17,8 +17,8 @@ type QueryFilter interface {
 
 // AQueryFilter ...
 type AQueryFilter struct {
-	key  string
-	path *QueryPath
+	key  string     // 键
+	path *QueryPath // 列路径
 }
 
 // NewAQueryFilter ...

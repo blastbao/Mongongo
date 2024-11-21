@@ -64,14 +64,18 @@ func NewTable(tableName string) *Table {
 }
 
 func (t *Table) get(key string) *Row {
-	// selects the row associated with the given key
+	// 创建一个行对象
 	row := NewRowT(t.tableName, key)
+	// 遍历表中的所有列族
 	for columnFamily := range t.getColumnFamilies() {
+		// 获取列族数据
 		cf := t.getCF(key, columnFamily)
 		if cf != nil {
+			// 将该列族的数据添加到当前行中
 			row.addColumnFamily(cf)
 		}
 	}
+	// 返回构建好的行数据
 	return row
 }
 
@@ -160,19 +164,16 @@ func (t *Table) getNumberOfColumnFamilies() int {
 // [重要]
 func (t *Table) apply(row *Row) {
 	key := row.Key
-	// add row to commit log
 	start := time.Now().UnixNano() / int64(time.Millisecond)
-	// cLogCtx := openCommitLog(t.tableName).add(row) // first write to commitlog
 	spew.Printf("table: %v \n -- table: %+v\n", t, t)
 	log.Printf("size: %v\n", t.tableMetadata.getSize())
-
-	cLogCtx := openCommitLogE().add(row) // first write to commitlog
+	// 先将行数据写入到提交日志
+	cLogCtx := openCommitLogE().add(row)
+	// 然后将数据写入到对应的列族存储
 	for cName, columnFamily := range row.ColumnFamilies {
 		cfStore := t.columnFamilyStores[cName]
-		cfStore.apply(key, columnFamily, cLogCtx) // then write to memtable
+		cfStore.apply(key, columnFamily, cLogCtx)
 	}
-
-	// row.clear()
 	timeTaken := time.Now().UnixNano()/int64(time.Millisecond) - start
 	log.Printf("table.apply(row) took %v ms\n", timeTaken)
 }
@@ -181,15 +182,21 @@ func (t *Table) getColumnFamilyID(cfName string) int {
 	return t.tableMetadata.getColumnFamilyID(cfName)
 }
 
+// 根据查询过滤器（QueryFilter）获取指定的 Row 。
 func (t *Table) getRow(filter QueryFilter) *Row {
+	// 获取列族存储
 	cfStore := t.columnFamilyStores[filter.getPath().ColumnFamilyName]
-	row := NewRowT(t.tableName, filter.getKey())
+	// 获取列族数据
 	columnFamily := cfStore.getColumnFamily(filter)
+	// 创建行，用于保存 table/key 相关的数据
+	row := NewRowT(t.tableName, filter.getKey())
 	spew.Printf("\tcfStore: %#+v\n\n", cfStore)
 	spew.Printf("\trow: %#+v\n\n", row)
 	spew.Printf("\tcf: %#+v\n\n", columnFamily)
+	// 将列族添加到行中
 	if columnFamily != nil {
 		row.addColumnFamily(columnFamily)
 	}
+	// 返回行
 	return row
 }

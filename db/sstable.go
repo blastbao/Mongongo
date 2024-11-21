@@ -7,6 +7,7 @@ package db
 
 import (
 	"encoding/binary"
+	"io"
 	"log"
 	"os"
 	"sort"
@@ -47,6 +48,8 @@ var (
 // position in the data file. Binary search is performed on
 // a list of these objects to lookup keys within the SSTable
 // data file.
+//
+// 存储键在 SSTable 中的位置，用于快速查找
 type KeyPositionInfo struct {
 	key      string
 	position int64
@@ -366,6 +369,8 @@ func (s *SSTable) close() {
 }
 
 // TouchKeyCache implements LRU cache
+//
+// LRU 缓存，缓存访问过的键
 type TouchKeyCache struct {
 	size int
 }
@@ -381,8 +386,7 @@ func NewTouchKeyCache(size int) *TouchKeyCache {
 // Use this version to write to the SSTable
 func NewSSTableP(directory, filename, pType string) *SSTable {
 	s := &SSTable{}
-	s.dataFileName = directory + string(os.PathSeparator) +
-		filename + "-Data.db"
+	s.dataFileName = directory + string(os.PathSeparator) + filename + "-Data.db"
 	var err error
 	s.dataWriter, err = os.Create(s.dataFileName)
 	if err != nil {
@@ -611,16 +615,17 @@ func (s *SSTable) closeByte(footer []byte, size int) {
 	s.dataWriter.Sync()
 }
 
+// 获取当前文件指针的位置
 func getCurrentPos(file *os.File) int64 {
-	res, err := file.Seek(0, 0)
+	res, err := file.Seek(0, io.SeekCurrent)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(err) // 如果发生错误，程序会退出并打印错误信息
 	}
-	file.Seek(res, 0)
 	return res
 }
 
 // BlockMetadata ...
+// 一个数据块的元数据，包括位置和大小。
 type BlockMetadata struct {
 	position int64
 	size     int64

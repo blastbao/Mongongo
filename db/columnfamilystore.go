@@ -713,39 +713,67 @@ func getCurrentTimeInMillis() int64 {
 	return time.Now().UnixNano() / int64(time.Millisecond)
 }
 
+// 从列族存储中根据给定的查询过滤器（QueryFilter）获取列族数据，并进行垃圾回收，最终返回一个没有已经删除列（垃圾回收后的）的列族数据
+//
+// 参数：
+//   - filter: 指定查询条件，可以是基于列名范围、列族名、超列名等过滤条件。
+//   - gcBefore: 垃圾回收时间戳，表示所有在该时间戳之前被删除的列将被清除（不可回收的列会被移除）。
+//
+//
+// 如果查询的条件包含超列（例如，一个列族下有多个子列），就会先查询超列，确保能够拿到超列中的数据。
+// 这里如果存在超列，使用一个 NameQueryFilter 来过滤和获取超列数据。
+//
+
 func (c *ColumnFamilyStore) getColumnFamilyGC(filter QueryFilter, gcBefore int) *ColumnFamily {
 	// get a list of columns starting from a given column, in a specified order
 	// only the latest version of a column is returned
 	start := getCurrentTimeInMillis()
 	// if we are querying subcolumns of a supercolumn, fetch the
 	// supercolumn with NameQueryFilter, then filter in-memory
+
+	// 处理超列查询
 	if filter.getPath().SuperColumnName != nil {
+		// 创建一个过滤器，用于过滤超列
 		nameFilter := NewNamesQueryFilter(
 			filter.getKey(),
 			NewQueryPathCF(c.columnFamilyName),
 			filter.getPath().SuperColumnName,
 		)
+		// 从列族中获取超列数据
 		cf := c.getColumnFamily(nameFilter)
 		if cf == nil || cf.getColumnCount() == 0 {
 			return cf
 		}
+		// 获取超列数据，进行过滤
 		sc := cf.GetSortedColumns()[0].(SuperColumn)
 		scFiltered := filter.filterSuperColumn(sc, gcBefore)
+		// 克隆列族，并加入过滤后的超列
 		cfFiltered := cf.cloneMeShallow()
 		cfFiltered.addColumn(scFiltered)
 		c.readStats = append(c.readStats, getCurrentTimeInMillis()-start)
 	}
+
+	// 查询内存表（Memtable）中的数据，内存表是一个内存中的数据结构，它包含了最近更新的数据。
+
 	// we are querying top-level, do a merging fetch with indices
 	c.rwmu.RLock()
 	defer c.rwmu.RUnlock()
 	iterators := make([]ColumnIterator, 0)
 	spew.Printf("\tc.memtable: %#+v\n\n", c.memtable)
+
+	// 获取内存表的列族数据
 	iter := filter.getMemColumnIterator(c.memtable)
 	spew.Printf("\titer: %#+v\n\n", iter)
+	// 获取列族数据
 	returnCF := iter.getColumnFamily()
 	spew.Printf("\treturnCF: %#+v\n\n", returnCF)
 	// return returnCF
 	iterators = append(iterators, iter)
+
+	// 除了内存表，我们还需要考虑那些还没被写入磁盘的内存数据（称为 "未刷新内存表"）。
+	// 这些数据还在内存中，但有些已经写入了磁盘，未刷新是指这些数据还没完全持久化。
+	// 将这些数据添加到 iterators 列表中，用于后续的合并。
+
 	// add the memtable being flushed
 	memtables := getUnflushedMemtables(filter.getPath().ColumnFamilyName)
 	for _, memtable := range memtables {
@@ -753,9 +781,14 @@ func (c *ColumnFamilyStore) getColumnFamilyGC(filter QueryFilter, gcBefore int) 
 		returnCF.deleteCF(iter.getColumnFamily())
 		iterators = append(iterators, iter)
 	}
+
+	// 处理磁盘上的 SSTable ，SSTable 是存储在磁盘上的数据文件。
+
 	// add the SSTables on disk
 	sstables := make([]*SSTableReader, 0)
 	for _, sstable := range c.ssTables {
+		// 遍历磁盘上的 SSTable，并通过 getSSTableColumnIterator 获取 SSTable 中的列族数据。
+		// 合并这些 SSTable 中的数据，并加入到 iterators 列表中。
 		sstables = append(sstables, sstable)
 		iter = filter.getSSTableColumnIterator(sstable)
 		if iter.hasNext() { // initializes iter.CF
@@ -763,13 +796,21 @@ func (c *ColumnFamilyStore) getColumnFamilyGC(filter QueryFilter, gcBefore int) 
 		}
 		iterators = append(iterators, iter)
 	}
+
+	// 在获取了内存表、未刷新内存表、SSTable 中的所有数据后，我们需要合并它们。
+	// 为此，我们使用了一个 CollatedIterator 来合并这些列族数据。
 	collated := NewCollatedIterator(iterators)
+	// 据查询过滤器进一步处理这些合并的数据，特别是执行垃圾回收（删除已经标记为删除的列）。
 	filter.collectCollatedColumns(returnCF, collated, gcBefore)
+	// 根据垃圾回收时间（gcBefore），删除所有在该时间之前被标记为删除的列。
 	res := removeDeleted(returnCF, gcBefore)
+	// 关闭所有用来查询列族的迭代器。
 	for _, ci := range iterators {
 		ci.close()
 	}
+	// 耗时统计
 	c.readStats = append(c.readStats, getCurrentTimeInMillis()-start)
+	// 返回结果
 	return res
 	// return iter.getColumnFamily()
 }
@@ -872,10 +913,13 @@ func (c *ColumnFamilyStore) getNextFileName() string {
 }
 
 func (c *ColumnFamilyStore) forceFlush() {
+	// 没有待刷新的 memtable
 	if c.memtable.isClean() {
 		return
 	}
+	// 创建 CommitLogContext ，用于追踪某个特定行（Row）在提交日志（Commit Log）中的位置。
 	ctx := openCommitLogE().getContext()
+	// 将 c.memtable 刷到磁盘
 	c.switchMemtableN(c.memtable, ctx)
 }
 

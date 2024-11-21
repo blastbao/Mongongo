@@ -280,6 +280,15 @@ func (c *ColumnSerializer) serializeB(column IColumn, dos []byte) {
 }
 
 // 从文件中反序列化数据并返回一个新的列。
+//
+// +----------------------------------------------------------------+
+// | Field      | Length   | Value                                  |
+// +----------------------------------------------------------------+
+// | Column Name| 4 bytes  | "col1" (4 bytes)                       |
+// | DeleteMark | 1 byte   | true (1 byte)                          |
+// | Timestamp  | 8 bytes  | 1610000000000 (8 bytes)                |
+// | Value      | 10 bytes | "value_data" (10 bytes)                |
+// +----------------------------------------------------------------+
 func (c *ColumnSerializer) deserialize(dis *os.File) IColumn {
 	name, _ := readString(dis)
 	deleteMark, _ := readBool(dis)

@@ -23,21 +23,50 @@ func NewSSTableNamesIterator(sstable *SSTableReader, key string, columns [][]byt
 	r := &SSTableNamesIterator{}
 	r.columns = columns
 	r.curIndex = 0
+
+	// 定位到 key 在 sstable 的存储位置
 	decoratedKey := sstable.partitioner.DecorateKey(key)
-	position := sstable.getPosition(decoratedKey)
+	position := sstable.getPosition(decoratedKey) // 根据索引定位到 key 的信息存储在数据文件中的位置
 	if position < 0 {
 		return r
 	}
+
 	file, err := os.Open(sstable.dataFileName)
 	if err != nil {
 		log.Fatal(err)
 	}
+	if _, err = file.Seek(position, 0); err != nil {
+		log.Fatal(err)
+	}
+
+	// len(key)
+	// key
+	// len(val)
+	// bloom filter
+	// column index list ===>  [<column_name, offset>, <column_name, offset>,...]
+	// column count
+	// ===== column data =======
+	// 	---------
+	//  Column Name
+	//  DeleteMark
+	//  Timestamp
+	//	Value
+	//	---------
+	//  Column Name
+	//  DeleteMark
+	//  Timestamp
+	//	Value
+	//	---------
+	//  ...
+
 	keyInDisk, _ := readString(file)
 	if keyInDisk != decoratedKey {
 		log.Fatal("keyInDisk should == decoratedKey")
 	}
+
 	readInt(file)
 	// read the bloom filter that summarizing the columns
+	// bf 记录了 key 可能包含的列，不是准确的
 	bf := defreezeBloomFilter(file)
 	filteredColumnNames := make([][]byte, len(columns))
 	for _, name := range columns {
@@ -45,17 +74,19 @@ func NewSSTableNamesIterator(sstable *SSTableReader, key string, columns [][]byt
 			filteredColumnNames = append(filteredColumnNames, name)
 		}
 	}
-
 	if len(filteredColumnNames) == 0 {
 		return r
 	}
+
+	// index 中包含了 key 的各个列存储的位置索引
 	indexList := deserializeIndex(file)
 	cf := CFSerializer.deserializeFromSSTableNoColumns(sstable.makeColumnFamily(), file)
+	// 读取 Key 的列的数目
 	readInt(file) // columncount
 	ranges := make([]*IndexInfo, 0)
 	// get the various column ranges we have to read
 	for _, name := range filteredColumnNames {
-		// 查找列 name 在哪个索引块中
+		// 查找列在哪个索引块中
 		index := indexFor(name, indexList, false)
 		// 不存在
 		if index == len(indexList) {

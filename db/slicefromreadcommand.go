@@ -48,6 +48,5 @@ func (s *SliceFromReadCommand) GetTable() string {
 
 // GetRow ...
 func (s *SliceFromReadCommand) GetRow(table *Table) *Row {
-	return table.getRow(NewSliceQueryFilter(s.Key, &s.QPath,
-		s.Start, s.Finish, s.Reversed, s.Count))
+	return table.getRow(NewSliceQueryFilter(s.Key, &s.QPath, s.Start, s.Finish, s.Reversed, s.Count))
 }

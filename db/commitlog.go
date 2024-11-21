@@ -126,17 +126,21 @@ func (c *CommitLog) writeCommitLogHeaderB(bytes []byte, reset bool) {
 }
 
 func (c *CommitLog) writeOldCommitLogHeader(oldFile string, header *CommitLogHeader) {
+	// 打开 log
 	logWriter := createCLWriter(oldFile)
+	// 把 header 按照 len + data 方式写入 log
 	writeCommitLogHeader(logWriter, header.toByteArray())
+	// 关闭 log
 	logWriter.Close()
 }
 
+// 将 bytes 写入到 commit log 的 header 部分，如果 reset 为 true 在写入后将文件偏移重置。
 func (c *CommitLog) writeCLH(bytes []byte, reset bool) {
+	// 获取 logWriter 文件当前写入位置
 	currentPos, err := c.logWriter.Seek(c.commitHeaderStartPos, 0)
 	if err != nil {
 		log.Print(err)
 	}
-	currentPos += c.commitHeaderStartPos
 	// write the commit log header
 	c.logWriter.Write(bytes)
 	if reset {
@@ -276,13 +280,13 @@ func (c *CommitLog) add(row *Row) *CommitLogContext {
 // writeString will first write string length(int32)
 // and then write string in bytes
 func writeString(file *os.File, s string) int {
-	// write string length
+	// 写入字符串长度
 	b4 := make([]byte, 4)
 	binary.BigEndian.PutUint32(b4, uint32(len(s)))
 	file.Write(b4)
-	// write string bytes
+	// 写入字符串的字节数据
 	file.Write([]byte(s))
-	// return total bytes written
+	// 返回写入的总字节数
 	return 4 + len(s)
 }
 func writeStringB(file []byte, s string) int {
