@@ -64,36 +64,31 @@ func (m *Memtable) put(key string, columnFamily *ColumnFamily) {
 	if m.isFrozen {
 		log.Fatal("memtable is frozen!")
 	}
-	// 更新
+	// 更新标记位
 	m.isDirty = true
+	// 保存 key 列族信息
 	m.runResolve(key, columnFamily)
 }
 
 // 如果 Memtable 中已经存在指定 key 的列族（ColumnFamily），则更新这个列族；如果不存在，则将新的列族数据添加到 Memtable 中。
-func (m *Memtable) runResolve(key string, columnFamily *ColumnFamily) {
+func (m *Memtable) runResolve(key string, newcf *ColumnFamily) {
 	// 检查 Memtable 中是否已经存在该 key 对应的列族
-	oldCf, ok := m.columnFamilies[key]
+	cf, ok := m.columnFamilies[key]
 	if ok {
-		// 如果存在，则获取旧的列族信息
-		oldSize := oldCf.size
-		oldObjectCount := oldCf.getColumnCount()
-		// 将新列族中的数据添加到旧的列族中
-		oldCf.addColumns(columnFamily)
-		// 获取更新后的列族信息
-		newSize := oldCf.size
-		newObjectCount := oldCf.getColumnCount()
-		// 更新字节大小
-		m.resolveSize(oldSize, newSize)
-		// 更新对象数量
-		m.resolveCount(oldObjectCount, newObjectCount)
-		// ??? 删除旧的列族数据 ??? 防止数据冗余 ???
-		oldCf.deleteCF(columnFamily)
+		// 如果 Memtable 中存在该 key 的列族，进行合并，根据时间戳决定相同的列留谁
+		oldSize := cf.size
+		oldColCount := cf.getColumnCount()
+		cf.addColumns(newcf) // 把 newcf 中的 column 添加到 cf 中，如果有相同 column 根据优先级(timestamp)决定保留谁。
+		newSize := cf.size
+		newColCount := cf.getColumnCount()
+		m.resolveSize(oldSize, newSize)          // 更新 m.currentSize
+		m.resolveCount(oldColCount, newColCount) // 更新 m.currentObjectCnt
+		cf.deleteCF(newcf)                       // 合并 cf.localDeletionTime, cf.markedForDeleteAt 并更新
 	} else {
-		// 如果 Memtable 中没有该 key 对应的列族，则直接将新列族添加到 Memtable 中
-		m.columnFamilies[key] = *columnFamily
-		// 更新 Memtable 的大小和对象数量
-		atomic.AddInt32(&m.currentSize, columnFamily.size+int32(len(key)))
-		atomic.AddInt32(&m.currentObjectCnt, int32(columnFamily.getColumnCount()))
+		// 如果 Memtable 中没有该 key 的列族，则直接保存新列族
+		m.columnFamilies[key] = *newcf
+		atomic.AddInt32(&m.currentSize, newcf.size+int32(len(key)))         // 更新 m.currentSize
+		atomic.AddInt32(&m.currentObjectCnt, int32(newcf.getColumnCount())) // 更新 m.currentObjectCnt
 	}
 }
 
@@ -115,32 +110,29 @@ func (m *Memtable) isThresholdViolated() bool {
 
 // 将 Memtable 中的数据写入到磁盘上的 SSTable 文件中，确保数据不会丢失。
 func (m *Memtable) flush(cLogCtx *CommitLogContext) {
-	// 1. 根据表名和列族名获取对应的列族存储，该存储对象负责该列族的数据管理。
+	// 1. 一张表有很多个列族，一个 Memtable 只负责一个列族，先获取对应的列族存储
 	cfStore := OpenTable(m.tableName).columnFamilyStores[m.cfName]
-	// 2. 创建一个新的 SSTable 写入器，用于将 Memtable 中的数据写入到 SSTable 文件，指定临时路径和列族数量。
+	// 2. 创建一个新的 SSTable 写入器，用于将 Memtable 中的数据写入到 SSTable 临时文件中，len(m.columnFamilies) 是 key 的数目。
 	writer := NewSSTableWriter(cfStore.getTmpSSTablePath(), len(m.columnFamilies))
-	// 3. 按照键对列族升序排序；Memtable 中保存着多个列族，每个列族有一个对应的键，partitioner 可能为键添加某些额外的信息（分区）。
+	// 3. 要将 keys 按序写入到 sstable 中。
 	orderedKeys := make([]string, 0)
 	for cfName := range m.columnFamilies {
 		orderedKeys = append(orderedKeys, writer.partitioner.DecorateKey(cfName))
 	}
 	sort.Sort(ByKey(orderedKeys))
-	// 4. 将列族数据写入 SSTable 文件
+
+	// 4. 逐个 key 写入 SSTable 文件
 	for _, key := range orderedKeys {
-		// 获取装饰后的键（可能带有分区信息等）
-		k := writer.partitioner.DecorateKey(key)
+		// 获取原始键
+		k := writer.partitioner.UndecorateKey(key)
+		// 获取列族
+		columnFamily, _ := m.columnFamilies[k]
+		// 将列族序列化（列排序、bf、列索引、列数据）后写入到 SSTable
 		buf := make([]byte, 0)
-		// 检查是否有这个 key 对应的列族
-		columnFamily, ok := m.columnFamilies[k]
-		if ok {
-			// serialize the cf with column indexes
-			// 将列族序列化存到缓冲区
-			CFSerializer.serializeWithIndexes(&columnFamily, buf)
-			// now write the key and value to disk
-			// 将序列化后的数据（key 和 value）写入到 SSTable
-			writer.append(key, buf)
-		}
+		CFSerializer.serializeWithIndexes(&columnFamily, buf)
+		writer.append(key, buf)
 	}
+
 	// 5. 完成写入并获取 SSTable 文件的读取器
 	ssTable := writer.closeAndOpenReader()
 	// 6. 通知列族存储 Memtable 已经被刷新

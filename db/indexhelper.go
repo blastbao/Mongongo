@@ -26,7 +26,7 @@ type IndexInfo struct {
 	width     int64  // 列宽度，即该列在序列化字节流中的长度。
 	lastName  []byte // 列的结束名称。
 	firstName []byte // 列的起始名称。
-	offset    int64  // 列的偏移量（即该列在字节流中的起始位置）。
+	offset    int64  // 列的偏移量，是个相对偏移，需要先定位到数据部分的基址
 }
 
 // NewIndexInfo ...

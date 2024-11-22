@@ -28,7 +28,7 @@ func (c Column) addColumn(column IColumn) {
 
 func (c Column) getMarkedForDeleteAt() int64 {
 	if c.isMarkedForDelete() == false {
-		log.Fatal("column is not marked for delete")
+		log.Fatal("column is not marked for updateDeleteTime")
 	}
 	return c.Timestamp
 }
@@ -65,8 +65,8 @@ func (c Column) getSize() int32 {
 	return int32(4 + 8 + 4 + len(c.Name) + len(c.Value))
 }
 
-// delete deletes a Column
-/*func (c Column) delete() {
+// updateDeleteTime deletes a Column
+/*func (c Column) updateDeleteTime() {
 	if c.isMarkedForDelete == false {
 		c.isMarkedForDelete = true
 		c.Value = ""
@@ -193,15 +193,16 @@ func (c Column) GetTimestamp() int64 {
 	return c.Timestamp
 }
 
-// 比较两个列的优先级，优先级基于时间戳和是否标记为删除。如果列被标记为删除（Tombstone），则它的优先级更高。
+// 比较两个列的优先级。
 func (c Column) comparePriority(o Column) int64 {
+	// 如果 c 被标记为删除了，如果和 o 时间戳相等，则认为删除优先级更高。
 	if c.isMarkedForDelete() {
-		// tombstone always wins ties
 		if c.Timestamp < o.Timestamp {
 			return -1
 		}
 		return 1
 	}
+	// 否则，如果 c 和 o 时间戳相等，认为优先级相同
 	return c.Timestamp - o.Timestamp
 }
 

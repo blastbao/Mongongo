@@ -24,13 +24,14 @@ func NewSSTableNamesIterator(sstable *SSTableReader, key string, columns [][]byt
 	r.columns = columns
 	r.curIndex = 0
 
-	// 定位到 key 在 sstable 的存储位置
+	// 根据索引文件获取 key 在数据文件中的存储位置
 	decoratedKey := sstable.partitioner.DecorateKey(key)
-	position := sstable.getPosition(decoratedKey) // 根据索引定位到 key 的信息存储在数据文件中的位置
+	position := sstable.getPosition(decoratedKey)
 	if position < 0 {
 		return r
 	}
 
+	// 打开数据文件，定位到 key 的数据存储位置
 	file, err := os.Open(sstable.dataFileName)
 	if err != nil {
 		log.Fatal(err)
@@ -38,6 +39,8 @@ func NewSSTableNamesIterator(sstable *SSTableReader, key string, columns [][]byt
 	if _, err = file.Seek(position, 0); err != nil {
 		log.Fatal(err)
 	}
+
+	// key 的一个列族下多个列是整体存储的，
 
 	// len(key)
 	// key

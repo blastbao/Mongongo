@@ -16,39 +16,30 @@ import (
 var CIndexer = &ColumnIndexer{}
 
 // ColumnIndexer ...
-//
-// ColumnIndexer 对列族（ColumnFamily）中的列进行索引。
-//
-// 主要功能：
-//   - 序列化列族数据，包括列的布隆过滤器（Bloom Filter）和列索引信息。
-//   - 创建布隆过滤器，用于快速判断列是否存在。
-//   - 执行列索引，生成列的索引并将其写入字节流。
 type ColumnIndexer struct{}
 
-func (c *ColumnIndexer) serialize(columnFamily *ColumnFamily, dos []byte) {
-	// currently it is sorted by key string
-	columns := columnFamily.GetSortedColumns()
+func (c *ColumnIndexer) serialize(cf *ColumnFamily, dos []byte) {
+	// 按列名顺序
+	columns := cf.GetSortedColumns()
+	// 创建 column bf ，用于快速确定一个 col 是否不存在
 	bf := c.createColumnBloomFilter(columns)
-	// write out the bloom filter
+	// 把 bf 序列化到 buf 中
 	buf := make([]byte, 0)
 	utils.BFSerializer.SerializeB(bf, buf)
-	// write the length of the serialized bloom filter
-	// and write the serialized bytes. 2 in 1 :)
+	// 把 len(buf) + buf 写入到 dos 中
 	writeBytesB(dos, buf)
-	// do the indexing
+	// 建立列索引表 []*IndexInfo 并序列化存入 dos 中；IndexInfo 记录列在数据文件中的偏移（相对偏移）和大小，用于加速查找。
 	c.doIndexing(columns, dos)
 }
 
-// 布隆过滤器用于快速判断列是否存在。
-// 当需要查询某个列时，可以首先通过布隆过滤器判断列名是否存在。
-// 如果布隆过滤器表明该列不存在，那么你可以直接跳过读取操作。
-// 如果布隆过滤器表明该列可能存在，你才会进一步实际访问列的数据。
-// 这大大减少了不必要的读取和计算开销。
+// 布隆过滤器用于快速判断列是否存在，以减少了不必要的开销。
+//   - 如果布隆过滤器表明该列不存在，那么你可以直接跳过读取操作。
+//   - 如果布隆过滤器表明该列可能存在，你才会进一步实际访问列的数据。
 //
 // 步骤：
-//   - 统计总的列数
+//   - 统计总列数
 //   - 创建布隆过滤器
-//   - 填充布隆过滤器：将列族中每个列（包括超列及其子列）都写入布隆过滤器。
+//   - 填充布隆过滤器：将列族中每个列名（包括超列及其子列）都写入布隆过滤器。
 func (c *ColumnIndexer) createColumnBloomFilter(columns []IColumn) *utils.BloomFilter {
 	columnCount := 0
 	for _, column := range columns {
@@ -71,9 +62,10 @@ func (c *ColumnIndexer) createColumnBloomFilter(columns []IColumn) *utils.BloomF
 }
 
 // [重要]
-// 在 Cassandra 或类似的数据库中，列是由一个唯一的列名标识的。假设你已经知道要查找的列名，接下来的任务就是通过索引来定位该列在存储中的位置。
+// 在 Cassandra 或类似的数据库中，列是由一个唯一的列名标识的。
+// 假设你已经知道要查找的列名，接下来的任务就是通过索引来定位该列在存储中的位置。
 //
-// 索引已经为列名和它们在数据流中的位置创建了映射，查找过程的关键步骤是使用列名来在索引中找到对应的列的存储偏移量和数据长度。
+// 索引为列名和它们在数据文件中的位置创建了映射，查找时使用列名来在索引中找到对应的列的存储偏移量和数据长度。
 // 查找过程的基本步骤：
 //   - 索引查找：通过给定的列名，找到它所在的索引块，索引块的区间由 firstName 和 lastName 来定义，可以通过二分查找来定位列归属的区间对应的索引块。
 //   - 获取存储偏移量：一旦找到列名对应的索引块，你就可以通过 IndexInfo 对象获取列在存储中的偏移量（即它在磁盘文件中的位置）和列数据的大小。
@@ -86,7 +78,7 @@ func (c *ColumnIndexer) doIndexing(columns []IColumn, dos []byte) {
 	// Given the collection of columns in the column family,
 	// the name index is generated and written into the provided
 	// stream
-	//
+
 	// 没有列要索引，直接将索引大小设为 0 。
 	if len(columns) == 0 {
 		// empty write index size 0

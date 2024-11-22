@@ -461,7 +461,7 @@ func getCreationTime(name string) int64 {
 	return num
 }
 
-// delete log segments whose contents have
+// updateDeleteTime log segments whose contents have
 // been turned into SSTables
 func (c *CommitLog) discard(cLogCtx *CommitLogContext, id int) {
 	// Check if old commit logs can be deleted.

@@ -21,10 +21,11 @@ var (
 )
 
 // RowMutation definition
+// RowMutation 是一种在表中进行数据修改（插入、更新、删除）的操作。
 type RowMutation struct {
-	TableName    string
-	RowKey       string
-	Modification map[string]*ColumnFamily
+	TableName    string                   // 表
+	RowKey       string                   // 键
+	Modification map[string]*ColumnFamily // 存储每个列族的修改（列族名 -> 列族对象）
 }
 
 // NewRowMutation creates a new row mutation
@@ -66,6 +67,7 @@ func (rm *RowMutation) AddQ(path *QueryPath, value []byte, timestamp int64) {
 
 // AddCF adds column family to modification
 func (rm *RowMutation) AddCF(columnFamily *ColumnFamily) {
+	// 列族名 => 列族对象
 	rm.Modification[columnFamily.ColumnFamilyName] = columnFamily
 }
 
@@ -125,7 +127,7 @@ func (rm *RowMutation) Delete(path *QueryPath, timestamp int64) {
 	localDeleteTime := int(getCurrentTimeInMillis() / 1000)
 	columnFamily := createColumnFamily(rm.TableName, cfName)
 	if path.SuperColumnName == nil && path.ColumnName == nil {
-		columnFamily.delete(localDeleteTime, timestamp)
+		columnFamily.updateDeleteTime(localDeleteTime, timestamp)
 	} else if path.ColumnName == nil {
 		sc := NewSuperColumn(string(path.SuperColumnName))
 		sc.markForDeleteAt(localDeleteTime, timestamp)

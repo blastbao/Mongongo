@@ -63,24 +63,28 @@ func (cf *ColumnFamily) CreateColumn(columnName, value string, timestamp int64) 
 }
 
 // If we find and old column that has the same name, then ask it to resolve itself, else we add the new column
-func (cf *ColumnFamily) addColumn(column IColumn) {
-	name := column.getName()
+func (cf *ColumnFamily) addColumn(col IColumn) {
+	name := col.getName()
+	// 检查列族是否已经有同名列
 	oldColumn, ok := cf.Columns[name]
 	if ok {
+		// 如果是 SuperColumn 类型...
 		_, yes := oldColumn.(SuperColumn)
 		if yes { // is SuperColumn
 			oldSize := oldColumn.getSize()
-			oldColumn.putColumn(column)
+			oldColumn.putColumn(col)
 			atomic.AddInt32(&cf.size, int32(oldColumn.getSize()-oldSize))
 		} else {
-			if oldColumn.(Column).comparePriority(column.(Column)) <= 0 {
-				cf.Columns[name] = column
-				atomic.AddInt32(&cf.size, int32(column.getSize()))
+			// 如果是普通列，根据优先级决定保留谁
+			if oldColumn.(Column).comparePriority(col.(Column)) <= 0 {
+				cf.Columns[name] = col
+				atomic.AddInt32(&cf.size, col.getSize()-oldColumn.getSize())
 			}
 		}
 	} else {
-		atomic.AddInt32(&cf.size, column.getSize())
-		cf.Columns[name] = column
+		// 没有直接保存
+		atomic.AddInt32(&cf.size, col.getSize())
+		cf.Columns[name] = col
 	}
 }
 
@@ -138,7 +142,7 @@ func (cf *ColumnFamily) toByteArray() []byte {
 	buf = append(buf, b4...)
 	// write cf name bytes
 	buf = append(buf, []byte(cf.ColumnFamilyName)...)
-	// write if this cf is marked for delete
+	// write if this cf is marked for updateDeleteTime
 	if cf.deleteMark {
 		buf = append(buf, byte(1))
 	} else {
@@ -169,9 +173,9 @@ func (cf *ColumnFamily) getColumnCount() int {
 	return count
 }
 
-func (cf *ColumnFamily) addColumns(columnFamily *ColumnFamily) {
-	columns := columnFamily.Columns
-	for _, column := range columns {
+// 把 newcf 中的 column 添加到 cf 中，如果有相同 column 根据优先级(timestamp)决定保留谁。
+func (cf *ColumnFamily) addColumns(newcf *ColumnFamily) {
+	for _, column := range newcf.Columns {
 		cf.addColumn(column)
 	}
 }
@@ -184,16 +188,19 @@ func (cf *ColumnFamily) getLocalDeletionTime() int {
 	return cf.localDeletionTime
 }
 
-func (cf *ColumnFamily) deleteCF(cf2 *ColumnFamily) {
+func (cf *ColumnFamily) deleteCF(newcf *ColumnFamily) {
+	// 取最新的删除时间
 	t := cf.localDeletionTime
-	if t < cf2.localDeletionTime {
-		t = cf2.localDeletionTime
+	if t < newcf.localDeletionTime {
+		t = newcf.localDeletionTime
 	}
+	// 取最新的删除时间
 	m := cf.getMarkedForDeleteAt()
-	if m < cf2.getMarkedForDeleteAt() {
-		m = cf2.getMarkedForDeleteAt()
+	if m < newcf.getMarkedForDeleteAt() {
+		m = newcf.getMarkedForDeleteAt()
 	}
-	cf.delete(t, m)
+	// 更新删除时间
+	cf.updateDeleteTime(t, m)
 }
 
 func (cf *ColumnFamily) remove(columnName string) {
@@ -202,13 +209,15 @@ func (cf *ColumnFamily) remove(columnName string) {
 
 // GetSortedColumns ...
 func (cf *ColumnFamily) GetSortedColumns() []IColumn {
-	cnames := make([]string, 0)
+	// 对列名进行排序
+	names := make([]string, 0)
 	for name := range cf.Columns {
-		cnames = append(cnames, name)
+		names = append(names, name)
 	}
-	sort.Sort(ByKey(cnames))
+	sort.Sort(ByKey(names))
+	// 按照列名顺序排列 cf.columns 并返回
 	res := make([]IColumn, 0)
-	for _, name := range cnames {
+	for _, name := range names {
 		res = append(res, cf.Columns[name])
 	}
 	return res
@@ -225,7 +234,7 @@ func (cf *ColumnFamily) clear() {
 	cf.Columns = make(map[string]IColumn)
 }
 
-func (cf *ColumnFamily) delete(localtime int, timestamp int64) {
+func (cf *ColumnFamily) updateDeleteTime(localtime int, timestamp int64) {
 	cf.localDeletionTime = localtime
 	cf.markedForDeleteAt = timestamp
 }

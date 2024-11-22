@@ -168,11 +168,11 @@ func (t *Table) apply(row *Row) {
 	spew.Printf("table: %v \n -- table: %+v\n", t, t)
 	log.Printf("size: %v\n", t.tableMetadata.getSize())
 	// 先将行数据写入到提交日志
-	cLogCtx := openCommitLogE().add(row)
+	cmtLogCtx := openCommitLogE().add(row)
 	// 然后将数据写入到对应的列族存储
-	for cName, columnFamily := range row.ColumnFamilies {
-		cfStore := t.columnFamilyStores[cName]
-		cfStore.apply(key, columnFamily, cLogCtx)
+	for cfName, columnFamily := range row.ColumnFamilies {
+		cfStore := t.columnFamilyStores[cfName]
+		cfStore.apply(key, columnFamily, cmtLogCtx)
 	}
 	timeTaken := time.Now().UnixNano()/int64(time.Millisecond) - start
 	log.Printf("table.apply(row) took %v ms\n", timeTaken)

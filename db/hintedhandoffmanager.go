@@ -42,7 +42,7 @@ func DeliverHintsToEndpoint(endpoint *network.EndPoint) {
 	targetEPBytes := endpoint.HostName
 	// 1. scan through all the keys that we need to handoff
 	// 2. for each key read the list of recipients if the endpoint matches send
-	// 3. delete that recipient from theke if write was successful
+	// 3. updateDeleteTime that recipient from theke if write was successful
 	systemTable := OpenTable(config.SysTableName)
 	for _, tableName := range config.GetTables() {
 		hintedColumnFamily := systemTable.getCF(tableName, config.HintsCF)
@@ -80,7 +80,7 @@ func (h *HintedHandOffManager) deliverAllHints(hintStore *ColumnFamilyStore) {
 	// 1. Scan through all the keys that we need to handoff
 	// 2. For each key read the list of recipients and send
 	// 3. Delete that recipient from the key if write was successful
-	// 4. If all writes were success for a given key we can even delete the key
+	// 4. If all writes were success for a given key we can even updateDeleteTime the key
 	// 5. Now force a flush
 	// 6. Do major compaction to clean up all deletes etc.
 	for _, tableName := range config.GetTables() {
@@ -116,11 +116,11 @@ func deleteEndPoint(endpointAddr, tableName, key string, timestamp int64) {
 }
 
 func deleteHintedData(tableName, key string) {
-	// delete the row from application cfs: find
+	// updateDeleteTime the row from application cfs: find
 	// the largest timestamp in any of the data columns,
-	// and delete the entire cf with that value for
+	// and updateDeleteTime the entire cf with that value for
 	// the tombstone.
-	// Note that we delete all data associated with the
+	// Note that we updateDeleteTime all data associated with the
 	// key: this may be more than we sent earlier in
 	// sendMessage, since HH is not serialized with
 	// writes. This is sub-optimal but okay, sin HH

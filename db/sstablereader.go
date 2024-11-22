@@ -34,12 +34,12 @@ func openSSTableReader(dataFilename string) *SSTableReader {
 		// 创建一个新的 SSTableReader 实例
 		sstable = NewSSTableReader(dataFilename)
 		start := time.Now().UnixNano() / int64(time.Millisecond.Milliseconds())
-		// 加载索引文件，保存了 key 的 data 存储在数据文件中的偏移，以加速查询。
+		// 加载索引
 		sstable.loadIndexFile()
 		// 加载布隆过滤器，用于快速判断某个键是否存在
 		sstable.loadBloomFilter()
 		log.Printf("index load time for %v: %v ms.", dataFilename, time.Now().UnixNano()/int64(time.Millisecond)-start)
-		// 将 SSTableReader 加入缓存
+		// 将 SSTableReader 缓存
 		openedFiles.put(dataFilename, sstable)
 	}
 	return sstable
@@ -72,34 +72,33 @@ func NewSSTableReaderI(filename string, indexPositions []*KeyPositionInfo, bf *u
 
 func (s *SSTableReader) loadIndexFile() {
 	/** Index file structure:
-	 * decoratedKey (int32+string)
-	 * index (int64)
-	 * (repeat above two)
+	 *   - decoratedKey (int32+string)
+	 *   - index (int64)
+	 *   - (repeat above two)
 	 * */
 
-	// 打开索引文件
+	// 打开索引文件，获取文件大小（单位：字节）
 	fd, err := os.Open(s.indexFilename(s.dataFileName))
 	if err != nil {
 		log.Fatal(err)
 	}
-	// 获取文件信息
 	fileInfo, err := fd.Stat()
 	if err != nil {
 		log.Fatal(err)
 	}
-	// 获取文件大小（单位：字节）
 	size := fileInfo.Size()
+	// 读取索引信息，加载到内存中
 	i := 0
 	for {
-		// 获取当前文件指针位置
+		// 当前文件偏移
 		pos := getCurrentPos(fd)
-		// 读取到文件末尾，退出
+		// 文件末尾，退出
 		if pos == size {
 			break
 		}
-		// 读取 Key
+		// 读取 Key (int32+string)
 		decoratedKey, _ := readString(fd)
-		// 读取 Key 的 Value 存储在数据文件的 Offset
+		// 读取 Key 的 Data 存储 Offset (int64)
 		readInt64(fd)
 		// 每读取到 `s.indexInterval` 个键，就将当前键和位置存入 `indexPositions` 列表
 		if i%s.indexInterval == 0 {
@@ -191,7 +190,7 @@ func (s *SSTableReader) getPosition(decoratedKey string) int64 {
 		return -1
 	}
 
-	// 获取索引文件的起始扫描位置
+	// 获取 decoratedKey 的索引项在索引文件的偏移位置
 	start := s.getIndexScanPosition(decoratedKey)
 	if start < 0 {
 		return -1
@@ -203,7 +202,7 @@ func (s *SSTableReader) getPosition(decoratedKey string) int64 {
 		log.Fatal(err)
 	}
 
-	// 将文件指针移动到起始扫描位置
+	// 定位到 decoratedKey 的索引项
 	input.Seek(start, 0)
 	i := 0
 	for {

@@ -845,6 +845,7 @@ func (c *ColumnFamilyStore) apply(key string, columnFamily *ColumnFamily, cLogCt
 	initialMemtable := c.getMemtableThreadSafe()
 	// 2. 检查 Memtable 是否超过阈值，若超过把当前 memtable 落盘然后新建一个 memtable
 	if initialMemtable.isThresholdViolated() {
+		// [重要]
 		c.switchMemtableN(initialMemtable, cLogCtx)
 	}
 	// 3. 锁定 Memtable 操作，确保线程安全
@@ -874,22 +875,20 @@ func (c *ColumnFamilyStore) getMemtableThreadSafe() *Memtable {
 // 	}
 // }
 
-func (c *ColumnFamilyStore) switchMemtableN(oldMemtable *Memtable, ctx *CommitLogContext) {
-	// 锁定 Memtable 操作，确保线程安全
+func (c *ColumnFamilyStore) switchMemtableN(memtable *Memtable, ctx *CommitLogContext) {
 	c.memMu.Lock()
 	defer c.memMu.Unlock()
-	// 如果 Memtable 已经被冻结，返回
-	if oldMemtable.isFrozen {
+	// 已冻结，返回
+	if memtable.isFrozen {
 		return
 	}
-	// 冻结 Memtable，防止进一步的修改
-	oldMemtable.freeze()
-	// 获取列族所有待刷新到磁盘的 Memtables
-	memtables := getMemtablePendingFlushNotNull(c.columnFamilyName)
+	// 冻结
+	memtable.freeze()
 	// 将当前的 Memtable 添加到待刷新列表
-	memtables = append(memtables, oldMemtable)
-	// 提交刷新操作，将 Memtable 中的数据持久化到磁盘
-	submitFlush(oldMemtable, ctx)
+	pendingFlush := getMemtablePendingFlushNotNull(c.columnFamilyName)
+	pendingFlush = append(pendingFlush, memtable)
+	// 提交刷新
+	submitFlush(memtable, ctx)
 	// 创建新的 Memtable 来接收新的数据
 	c.memtable = NewMemtable(c.tableName, c.columnFamilyName)
 }
@@ -898,8 +897,9 @@ func submitFlush(memtable *Memtable, cLogCtx *CommitLogContext) {
 	// submit memtables to be flushed to disk
 	go func() {
 		memtable.flush(cLogCtx)
+		// 将当前的 Memtable 从待刷新列表中移除
 		memtables := getMemtablePendingFlushNotNull(memtable.cfName)
-		memtables = remove(memtables, memtable) // ?
+		memtables = remove(memtables, memtable)
 	}()
 }
 
