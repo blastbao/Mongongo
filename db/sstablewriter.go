@@ -15,9 +15,9 @@ import (
 
 // SSTableWriter ...
 type SSTableWriter struct {
-	*SSTable
-	dataFile  *os.File
-	indexFile *os.File
+	*SSTable           // 表
+	dataFile  *os.File // 数据文件
+	indexFile *os.File // 索引文件
 }
 
 // NewSSTableWriter ...
@@ -25,7 +25,6 @@ func NewSSTableWriter(filename string, keyCount int) *SSTableWriter {
 	s := &SSTableWriter{}
 	s.SSTable = NewSSTable(filename)
 	var err error
-
 	// 打开数据文件
 	s.dataFile, err = os.OpenFile(s.dataFileName, os.O_RDWR, 0666)
 	if err != nil {
@@ -124,7 +123,7 @@ func (s *SSTableWriter) closeAndOpenReader() *SSTableReader {
 	s.rename(s.filterFilename(s.dataFileName))
 	s.dataFileName = s.rename(s.dataFileName)
 
-	// 3.
+	// 3. 创建 SSTableReader ，注册到 openedFiles 后返回
 	return NewSSTableReaderI(s.dataFileName, s.indexPositions, s.bf)
 }
 

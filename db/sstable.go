@@ -77,18 +77,18 @@ func NewKeyPositionInfo(key string, position int64) *KeyPositionInfo {
 
 // SSTable is the struct for SSTable
 type SSTable struct {
-	dataFileName       string
-	columnFamilyName   string
-	bf                 *utils.BloomFilter
-	dataWriter         *os.File
-	blockIndex         map[string]*BlockMetadata
-	blockIndexes       []map[string]*BlockMetadata
-	indexPositions     []*KeyPositionInfo
-	lastWrittenKey     string
-	indexKeysWritten   int
-	indexInterval      int
-	firstBlockPosition int64
-	partitioner        dht.IPartitioner
+	dataFileName       string                      // 数据文件名
+	columnFamilyName   string                      // 列族名，一个 sstable 只会存储一个列族
+	bf                 *utils.BloomFilter          // key bf ，用于判断 key 是否不存在
+	dataWriter         *os.File                    // 貌似没用到
+	blockIndex         map[string]*BlockMetadata   // 貌似没用到
+	blockIndexes       []map[string]*BlockMetadata // 貌似没用到
+	indexPositions     []*KeyPositionInfo          // key index ，用于定位 key 的数据存储位置
+	lastWrittenKey     string                      // 确保有序写入
+	indexKeysWritten   int                         // 已写入的 key 数量
+	indexInterval      int                         // 每隔 indexInterval 个 key 保存一个索引项到内存中
+	firstBlockPosition int64                       // 貌似没用到
+	partitioner        dht.IPartitioner            // 分区器
 }
 
 // NewSSTable initializes a SSTable

@@ -45,27 +45,29 @@ func GetManagerInstance() *Manager {
 }
 
 func (d *Manager) init() {
-	// read the config file
+	// 从配置中获取表元数据，包含 <table, column family, meta>
 	tableToColumnFamily := config.Init()
+	// 根据表元数据初始化 meta 信息，包含列族、列族ID、列族类型等；
 	storeMetadata(tableToColumnFamily)
+	// 为每个表的每个列族创建 ColumnFamilyStore 实例并启动，其负责列族的数据管理。
 	for table := range tableToColumnFamily {
 		tbl := OpenTable(table)
 		tbl.onStart()
 	}
+	//
 	recoveryMgr := GetRecoveryManager()
 	recoveryMgr.doRecovery()
-	// config.Init()
-	// storeMetadata(tableToColumnFamily) // useless
-
 }
 
 func storeMetadata(tableToColumnFamily map[string]map[string]config.CFMetaData) {
-	cfID := 0
-	for table, columnFamilies := range tableToColumnFamily {
-		tmetadata := getTableMetadataInstance(table)
-		for columnFamily := range columnFamilies {
-			tmetadata.Add(columnFamily, cfID, config.GetColumnTypeTableName(table, columnFamily))
-			cfID++
+	// 分配列族 ID
+	cfid := 0
+	for table, cfs := range tableToColumnFamily {
+		// 为 table 初始化 meta 信息，其中包含：列族名 => 列族 ID，列族名 => 列族类型，列族 ID => 列族名 。
+		meta := getTableMetadataInstance(table)
+		for cf := range cfs {
+			meta.Add(cf, cfid, config.GetColumnTypeTableName(table, cf))
+			cfid++
 		}
 	}
 }

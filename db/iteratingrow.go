@@ -11,6 +11,8 @@ import (
 )
 
 // IteratingRow ...
+//
+// 迭代 key 在 sstable 中的每个 column
 type IteratingRow struct {
 	key               string
 	finishedAt        int64
@@ -22,25 +24,28 @@ type IteratingRow struct {
 func NewIteratingRow(file *os.File, sstable *SSTableReader) *IteratingRow {
 	r := &IteratingRow{}
 	r.file = file
-	r.key, _ = readString(file)
-	dataSize := int64(readInt(file))
+	r.key, _ = readString(file)      // len(key) + key
+	dataSize := int64(readInt(file)) // 数据大小
 	dataStart := getCurrentPos(file)
-	r.finishedAt = dataStart + dataSize
-	skipBloomFilterAndIndex(file)
+	r.finishedAt = dataStart + dataSize // 数据区域结束地址
+	skipBloomFilterAndIndex(file)       // 跳过 bf 和 index
 	r.emptyColumnFamily = CFSerializer.deserializeFromSSTableNoColumns(sstable.makeColumnFamily(), file)
-	readInt(file) // read column count
+	readInt(file) // 读取列的数目
 	return r
 }
 
 func (r *IteratingRow) hasNext() bool {
+	// 是否结束
 	return r.finishedAt != getCurrentPos(r.file)
 }
 
 func (r *IteratingRow) next() IColumn {
+	// 是否结束
 	if r.finishedAt == getCurrentPos(r.file) {
 		log.Fatal("reach end of row")
 		return Column{}
 	}
+	// 读取一个列
 	return r.emptyColumnFamily.columnSerializer.deserialize(r.file)
 }
 
@@ -49,6 +54,7 @@ func (r *IteratingRow) getEmptyColumnFamily() *ColumnFamily {
 }
 
 func (r *IteratingRow) skipRemaining() {
+	// 直接跳转到当前 key 的数据区域尾部
 	r.file.Seek(r.finishedAt, 0)
 }
 

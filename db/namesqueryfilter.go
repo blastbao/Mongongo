@@ -7,12 +7,14 @@ package db
 
 // NamesQueryFilter ...
 type NamesQueryFilter struct {
-	key     string
-	path    *QueryPath
-	columns [][]byte
+	key     string     // 指定读取哪个 key
+	path    *QueryPath //
+	columns [][]byte   // 指定读取哪些列
 }
 
 // NewNamesQueryFilter ...
+//
+// 获取 key 的一个 Column
 func NewNamesQueryFilter(key string, columnParent *QueryPath, column []byte) QueryFilter {
 	n := &NamesQueryFilter{}
 	n.key = key
@@ -23,6 +25,8 @@ func NewNamesQueryFilter(key string, columnParent *QueryPath, column []byte) Que
 }
 
 // NewNamesQueryFilterS ...
+//
+// 获取 key 的多个 Column
 func NewNamesQueryFilterS(key string, columnParent *QueryPath, columns [][]byte) QueryFilter {
 	n := &NamesQueryFilter{}
 	n.key = key
@@ -30,11 +34,11 @@ func NewNamesQueryFilterS(key string, columnParent *QueryPath, columns [][]byte)
 	n.columns = columns
 	return n
 }
-func (n *NamesQueryFilter) getKey() string {
-	return n.key
+func (filter *NamesQueryFilter) getKey() string {
+	return filter.key
 }
-func (n *NamesQueryFilter) getPath() *QueryPath {
-	return n.path
+func (filter *NamesQueryFilter) getPath() *QueryPath {
+	return filter.path
 }
 
 func containsC(list [][]byte, name string) bool {
@@ -45,23 +49,23 @@ func containsC(list [][]byte, name string) bool {
 	}
 	return false
 }
-func (n *NamesQueryFilter) filterSuperColumn(superColumn SuperColumn, gcBefore int) SuperColumn {
+func (filter *NamesQueryFilter) filterSuperColumn(superColumn SuperColumn, gcBefore int) SuperColumn {
 	for name := range superColumn.getSubColumns() {
-		if containsC(n.columns, name) == false {
+		if containsC(filter.columns, name) == false {
 			superColumn.Remove(name)
 		}
 	}
 	return superColumn
 }
 
-func (n *NamesQueryFilter) getMemColumnIterator(memtable *Memtable) ColumnIterator {
-	return memtable.getNamesIterator(n)
+func (filter *NamesQueryFilter) getMemColumnIterator(memtable *Memtable) ColumnIterator {
+	return memtable.getNamesIterator(filter)
 }
 
-func (n *NamesQueryFilter) getSSTableColumnIterator(sstable *SSTableReader) ColumnIterator {
-	return NewSSTableNamesIterator(sstable, n.key, n.columns)
+func (filter *NamesQueryFilter) getSSTableColumnIterator(sstable *SSTableReader) ColumnIterator {
+	return NewSSTableNamesIterator(sstable, filter.key, filter.columns)
 }
 
-func (n *NamesQueryFilter) collectCollatedColumns(returnCF *ColumnFamily, collatedColumns *CollatedIterator, gcBefore int) {
+func (filter *NamesQueryFilter) collectCollatedColumns(returnCF *ColumnFamily, collatedColumns *CollatedIterator, gcBefore int) {
 	return
 }

@@ -114,7 +114,7 @@ func (m *Memtable) flush(cLogCtx *CommitLogContext) {
 	cfStore := OpenTable(m.tableName).columnFamilyStores[m.cfName]
 	// 2. 创建一个新的 SSTable 写入器，用于将 Memtable 中的数据写入到 SSTable 临时文件中，len(m.columnFamilies) 是 key 的数目。
 	writer := NewSSTableWriter(cfStore.getTmpSSTablePath(), len(m.columnFamilies))
-	// 3. 要将 keys 按序写入到 sstable 中。
+	// 3. 将 keys 按字典升序写入到 sstable 中。
 	orderedKeys := make([]string, 0)
 	for cfName := range m.columnFamilies {
 		orderedKeys = append(orderedKeys, writer.partitioner.DecorateKey(cfName))
@@ -123,26 +123,23 @@ func (m *Memtable) flush(cLogCtx *CommitLogContext) {
 
 	// 4. 逐个 key 写入 SSTable 文件
 	for _, key := range orderedKeys {
-		// 获取原始键
-		k := writer.partitioner.UndecorateKey(key)
-		// 获取列族
-		columnFamily, _ := m.columnFamilies[k]
-		// 将列族序列化（列排序、bf、列索引、列数据）后写入到 SSTable
-		buf := make([]byte, 0)
+		k := writer.partitioner.UndecorateKey(key) // 获取原始键
+		columnFamily, _ := m.columnFamilies[k]     // 获取列族
+		buf := make([]byte, 0)                     // 将列族序列化（列排序、bf、列索引、列数据）后写入到 SSTable
 		CFSerializer.serializeWithIndexes(&columnFamily, buf)
 		writer.append(key, buf)
 	}
 
-	// 5. 完成写入并获取 SSTable 文件的读取器
-	ssTable := writer.closeAndOpenReader()
+	// 5. 完成写入并获取 SSTable 文件读取器
+	reader := writer.closeAndOpenReader()
 	// 6. 通知列族存储 Memtable 已经被刷新
 	cfStore.onMemtableFlush(cLogCtx)
 	// 7. 存储该 SSTable 文件的位置
-	cfStore.storeLocation(ssTable)
+	cfStore.storeLocation(reader)
 	// 8. 设置 Memtable 为已刷新状态
 	m.isFlushed = true
 	// 9. 输出日志，表示 Memtable 刷新完成
-	log.Print("Completed flushing ", ssTable.getFilename())
+	log.Print("Completed flushing ", reader.getFilename())
 }
 
 func (m *Memtable) freeze() {
@@ -156,7 +153,7 @@ func reverse(a []IColumn) {
 }
 
 func (m *Memtable) getNamesIterator(filter *NamesQueryFilter) ColumnIterator {
-	// 1. 从 Memtable 中查找与给定 key 对应的 ColumnFamily
+	// 1. 从 Memtable 中查找与给定 key 的 ColumnFamily
 	cf, ok := m.columnFamilies[filter.key]
 	spew.Printf("\tcf get from memtable: %#+v\n\n", cf)
 	// 2. 如果 Memtable 中没有该 key 对应的 ColumnFamily，则创建一个新的 ColumnFamily
@@ -169,7 +166,7 @@ func (m *Memtable) getNamesIterator(filter *NamesQueryFilter) ColumnIterator {
 		columnFamily = &cf
 		spew.Printf("\tshould enter here, cf: %#+v\n\n", columnFamily)
 	}
-	// 3. 返回一个新的 ColumnIterator，传入列族、起始位置、查询的列，用于遍历该列族中的数据。
+	// 3. 返回一个 ColumnIterator，传入列族、起始位置、查询的列，用于遍历该列族中的数据。
 	return NewSColumnIterator(0, columnFamily, filter.columns)
 }
 

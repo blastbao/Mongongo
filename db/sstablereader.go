@@ -29,20 +29,20 @@ type SSTableReader struct {
 // filename is the full path name with dir
 func openSSTableReader(dataFilename string) *SSTableReader {
 	// 从缓存中查找 SSTableReader ，避免重复构建
-	sstable, ok := openedFiles.get(dataFilename)
+	reader, ok := openedFiles.get(dataFilename)
 	if !ok {
 		// 创建一个新的 SSTableReader 实例
-		sstable = NewSSTableReader(dataFilename)
+		reader = NewSSTableReader(dataFilename)
 		start := time.Now().UnixNano() / int64(time.Millisecond.Milliseconds())
 		// 加载索引
-		sstable.loadIndexFile()
+		reader.loadIndexFile()
 		// 加载布隆过滤器，用于快速判断某个键是否存在
-		sstable.loadBloomFilter()
+		reader.loadBloomFilter()
 		log.Printf("index load time for %v: %v ms.", dataFilename, time.Now().UnixNano()/int64(time.Millisecond)-start)
 		// 将 SSTableReader 缓存
-		openedFiles.put(dataFilename, sstable)
+		openedFiles.put(dataFilename, reader)
 	}
-	return sstable
+	return reader
 }
 
 func getSSTableReader(dataFileName string) *SSTableReader {
@@ -63,7 +63,7 @@ func NewSSTableReader(filename string) *SSTableReader {
 func NewSSTableReaderI(filename string, indexPositions []*KeyPositionInfo, bf *utils.BloomFilter) *SSTableReader {
 	s := &SSTableReader{}
 	s.SSTable = NewSSTable(filename)
-	s.bf = bf
+	s.SSTable.bf = bf
 	srmu.Lock()
 	defer srmu.Unlock()
 	openedFiles.put(filename, s)

@@ -405,7 +405,7 @@ func writeBytesB(buf []byte, b []byte) int {
 // 	// first time
 // 	table := openTable(c.table)
 // 	for cName := range row.columnFamilies {
-// 		id := table.tableMetadata.cfIDMap[cName]
+// 		id := table.tableMetadata.cfIDs[cName]
 // 		if c.clHeader.header[id] == 0 || (c.clHeader.header[id] == 1 &&
 // 			c.clHeader.position[id] == 0) {
 // 			// really ugly workaround for getting file current position
@@ -428,7 +428,7 @@ func (c *CommitLog) onMemtableFlush(tableName, cf string, cLogCtx *CommitLogCont
 	// in the header and this is used to decide if the log
 	// file can be deleted.
 	table := OpenTable(tableName)
-	id := table.tableMetadata.cfIDMap[cf]
+	id := table.tableMetadata.cfIDs[cf]
 	c.discard(cLogCtx, id)
 }
 

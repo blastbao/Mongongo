@@ -11,6 +11,8 @@ import (
 )
 
 // SSTableNamesIterator ...
+//
+// 把 key 的 columns 从 SSTable 数据文件中读取出来，按列名排序后存入到 iter 中，curIndex 会循环读取每个列
 type SSTableNamesIterator struct {
 	cf       *ColumnFamily
 	curIndex int
@@ -69,7 +71,7 @@ func NewSSTableNamesIterator(sstable *SSTableReader, key string, columns [][]byt
 
 	readInt(file)
 	// read the bloom filter that summarizing the columns
-	// bf 记录了 key 可能包含的列，不是准确的
+	// bf 记录了 key 可能包含的列，过滤掉 columns 中一定不包含的列
 	bf := defreezeBloomFilter(file)
 	filteredColumnNames := make([][]byte, len(columns))
 	for _, name := range columns {
@@ -81,9 +83,12 @@ func NewSSTableNamesIterator(sstable *SSTableReader, key string, columns [][]byt
 		return r
 	}
 
-	// index 中包含了 key 的各个列存储的位置索引
+	// 读取列索引，包含 key 各个列数据的存储位置
 	indexList := deserializeIndex(file)
-	cf := CFSerializer.deserializeFromSSTableNoColumns(sstable.makeColumnFamily(), file)
+	// 创建 cf ，用来存储 key 的各个列数据
+	cf := sstable.makeColumnFamily()
+	// 读取 localDeletionTime 和 markedForDeleteAt 存入 cf
+	CFSerializer.deserializeFromSSTableNoColumns(cf, file)
 	// 读取 Key 的列的数目
 	readInt(file) // columncount
 	ranges := make([]*IndexInfo, 0)
@@ -104,7 +109,7 @@ func NewSSTableNamesIterator(sstable *SSTableReader, key string, columns [][]byt
 		ranges = append(ranges, indexInfo)
 	}
 
-	// seek to the correct offset to the data
+	// 定位到数据区域基址，从这开始存储着 key 的各个 column 的数据
 	columnBegin := getCurrentPos(file)
 	// now read all the columns from the ranges
 	for _, indexInfo := range ranges {
@@ -119,8 +124,10 @@ func NewSSTableNamesIterator(sstable *SSTableReader, key string, columns [][]byt
 			}
 		}
 	}
-
 	file.Close()
+
+	// 按列名排序
+	r.cf = cf
 	r.iter = cf.GetSortedColumns()
 	return r
 }

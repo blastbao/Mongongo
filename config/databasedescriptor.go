@@ -38,7 +38,7 @@ var (
 	// RPCTimeoutInMillis set 5s by default
 	RPCTimeoutInMillis = 5000
 	// GcGraceInSeconds defaults to 10 days
-	GcGraceInSeconds = 10 * 24 * 3600
+	GcGraceInSeconds = 10 * 24 * 3600 // 10 天
 	// Seeds is a set of nodes to connect to when a new node join the cluster
 	Seeds = map[string]bool{
 		"thumm01": true,
@@ -128,6 +128,8 @@ var (
 	// 	NColumnValue     string
 	// 	NColumnTimestamp string
 	// }
+
+	// TableToCFMetaData => <table, column family, meta>
 	TableToCFMetaData = map[string]map[string]CFMetaData{
 		SysTableName: SystemMetadata,
 		"table1": {
@@ -157,10 +159,32 @@ var (
 				""},        // NColumnTimestamp
 		},
 		"table2": {
-			"standardCF2": {"table2", "standardCF2", "Standard", "Name",
-				"row1", "", "", "column2", "", "", ""},
-			"superCF2": {"table2", "superCF2", "Super", "Timestamp",
-				"row2", "superCM", "superCK", "column2", "", "", ""},
+			"standardCF2": {
+				"table2",
+				"standardCF2",
+				"Standard",
+				"Name",
+				"row1",
+				"",
+				"",
+				"column2",
+				"",
+				"",
+				"",
+			},
+			"superCF2": {
+				"table2",
+				"superCF2",
+				"Super",
+				"Timestamp",
+				"row2",
+				"superCM",
+				"superCK",
+				"column2",
+				"",
+				"",
+				"",
+			},
 		},
 	}
 
@@ -243,18 +267,18 @@ func mkdir(path string) {
 
 func initInternal(file string) map[string]map[string]CFMetaData {
 	// I will not use file, however..
-	mkdir(MetadataDir)
-	mkdir(SnapshotDir)
+	mkdir(MetadataDir) // 元数据
+	mkdir(SnapshotDir) // 快照
 	// make sure all tables have directory
 	for _, path := range DataFileDirs {
-		mkdir(path + string(os.PathSeparator) + SysTableName)
+		mkdir(path + string(os.PathSeparator) + SysTableName) // 系统表
 		for _, table := range Tables {
-			mkdir(path + string(os.PathSeparator) + table)
+			mkdir(path + string(os.PathSeparator) + table) // 普通表
 		}
 	}
-	mkdir(LogFileDir)
-	mkdir(BootstrapFileDir)
-	return TableToCFMetaData
+	mkdir(LogFileDir)        // 日志目录
+	mkdir(BootstrapFileDir)  // 启动目录
+	return TableToCFMetaData // 返回各个数据表的 schema
 }
 
 // GetColumnType retrieve column type from cf metadata
@@ -287,6 +311,8 @@ func GetCompactionFileLocation(expectedCompactedFileSize int64) string {
 // space for compactions. If the size of the expected compacted file
 // is greater than the max disk space available return "", we cannot
 // do compaction in this case.
+//
+// 获取表的存储路径
 func GetDataFileLocationForTable(table string, expectedCompactedFileSize int64) string {
 	// maxFreeDisk := int64(0)
 	// maxDiskIndex := 0

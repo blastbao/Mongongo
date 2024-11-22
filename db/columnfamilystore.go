@@ -39,7 +39,7 @@ var (
 // ColumnFamilyStore provides storage specification of column family
 type ColumnFamilyStore struct {
 	threshold             int    // 内存表的阈值，超过此值会触发刷新。
-	bufSize               int    // 缓冲区大小，用于数据处理。
+	bufSize               int    // 缓冲区大小，用于数据压缩
 	compactionMemoryThres int    // 压缩内存阈值，控制压缩操作的内存使用。
 	tableName             string // 表的名称。
 	columnFamilyName      string // 列族的名称。
@@ -55,7 +55,7 @@ type ColumnFamilyStore struct {
 
 	// SSTable on disk for this cf
 	// ssTables map[string]bool
-	ssTables map[string]*SSTableReader // 存储在磁盘上的 SSTable。
+	ssTables map[string]*SSTableReader // 存储当前列族的数据文件(SSTable) 的读取器。
 
 	// modification lock used for protecting reads
 	// from compactions
@@ -148,7 +148,9 @@ func (f fileInfoList) Swap(i, j int) {
 func (c *ColumnFamilyStore) onStart() {
 	// scan for data files corresponding to this cf
 	ssTables := make([]os.FileInfo, 0)
+	// 获取所有与当前表相关的数据文件目录
 	dataFileDirs := config.GetAllDataFileLocationsForTable(c.tableName)
+	// 存储文件名与其完整路径
 	filenames := make(map[string]string) // map to full name with dir
 	for _, dir := range dataFileDirs {
 		files, err := ioutil.ReadDir(dir)
@@ -157,15 +159,16 @@ func (c *ColumnFamilyStore) onStart() {
 		}
 		for _, fileInfo := range files {
 			filename := fileInfo.Name() // name from FileInfo is always base name
-			if strings.Contains(filename, c.columnFamilyName) &&
-				(fileInfo.Size() == 0 || strings.Contains(filename, SSTableTmpFile)) {
-				err := os.Remove(path.Join(dir, filename))
-				if err != nil {
+			// 删除当前列族的空文件和临时文件
+			if strings.Contains(filename, c.columnFamilyName) && (fileInfo.Size() == 0 || strings.Contains(filename, SSTableTmpFile)) {
+				if err := os.Remove(path.Join(dir, filename)); err != nil {
 					log.Print(err)
 				}
 				continue
 			}
+			// 从数据文件名中提取 cf 名：<cf>-<index>-Data.db
 			cfName := getColumnFamilyFromFileName(filename)
+			// 如果是当前列族的数据文件，就保存起来
 			if cfName == c.columnFamilyName && strings.Contains(filename, "-Data.db") {
 				ssTables = append(ssTables, fileInfo)
 				// full path: var/storage/data/tablename/<cf>-<index>-Data.db
@@ -174,21 +177,16 @@ func (c *ColumnFamilyStore) onStart() {
 		}
 	}
 	sort.Sort(fileInfoList(ssTables)) // sort by modification time from old to new
-	// filename of the type:
-	//  var/storage/data/tablename/<cf>-<index>-Data.db
+
+	// 为列族下每个 sstable 数据文件创建一个 Reader 并保存
 	for _, file := range ssTables {
-		filename := filenames[file.Name()] // full name with dir path
-		sstable := openSSTableReader(filename)
-		c.ssTables[filename] = sstable
+		filename := filenames[file.Name()] // filename of the type: var/storage/data/tablename/<cf>-<index>-Data.db
+		c.ssTables[filename] = openSSTableReader(filename)
 	}
-	// filenames := make([]string, len(ssTables))
-	// for _, ssTable := range ssTables {
-	// 	filenames = append(filenames, ssTable.Name())
-	// }
-	// onSSTableStart(filenames)
 	log.Println("Submitting a major compaction task")
 	// submit initial check-for-compaction request
 	go c.doCompaction()
+
 	// schedule hinted handoff
 	if c.tableName == config.SysTableName && c.columnFamilyName == config.HintsCF {
 		GetHintedHandOffManagerInstance().submit(c)
@@ -385,12 +383,15 @@ func (c *ColumnFamilyStore) initPriorityQueue(files []string, ranges []*dht.Rang
 		}
 		// 遍历每个文件，将符合条件的文件加入优先队列
 		for _, file := range files {
-			sstableReader, _ := openedFiles.get(file)
-			fs := sstableReader.getFileStruct()
+			// 获取 sstable reader
+			reader, _ := openedFiles.get(file)
+			// 获取 row 迭代器
+			fs := reader.getFileStruct()
 			fs.advance(true)
 			if fs.isExhausted() {
 				continue
 			}
+			// 把 row 迭代器保存到 pq 中
 			heap.Push(pq, fs)
 		}
 	}
@@ -449,9 +450,10 @@ func getApproximateKeyCount(files []string) int {
 
 // merge all columnFamilies into a single instance, with only
 // the newest versions of columns preserved.
+//
+// 多个 ColumnFamily 对象合并成一个单一的 ColumnFamily ，在合并过程中，保留了每个列族中的最新版本的列。
 func resolve(columnFamilies []*ColumnFamily) *ColumnFamily {
-	size := len(columnFamilies)
-	if size == 0 {
+	if len(columnFamilies) == 0 {
 		return nil
 	}
 	// start from nothing so that we don't include
@@ -464,7 +466,9 @@ func resolve(columnFamilies []*ColumnFamily) *ColumnFamily {
 		if cf.ColumnFamilyName != cf2.ColumnFamilyName {
 			log.Fatal("name should be equal")
 		}
+		// 把 cf2 中的 column 添加到 cf 中，如果有相同 column 根据优先级(timestamp)决定保留谁。
 		cf.addColumns(cf2)
+		// 更新删除信息
 		cf.deleteCF(cf2)
 	}
 	return cf
@@ -476,7 +480,9 @@ func (c *ColumnFamilyStore) merge(columnFamilies []*ColumnFamily) {
 }
 
 func resolveAndRemoveDeleted(columnFamilies []*ColumnFamily) *ColumnFamily {
+	// 合并多个列族
 	cf := resolve(columnFamilies)
+	// 清理已被删除的列
 	return removeDeletedGC(cf)
 }
 
@@ -484,36 +490,45 @@ func removeDeletedGC(cf *ColumnFamily) *ColumnFamily {
 	return removeDeleted(cf, getDefaultGCBefore())
 }
 
+// 根据垃圾回收时间戳 (gcBefore) 从 ColumnFamily 中删除已标记为删除的列。
 func removeDeleted(cf *ColumnFamily, gcBefore int) *ColumnFamily {
 	if cf == nil {
 		return nil
 	}
 	// in case of a timestamp tie.
-	for cname, c := range cf.Columns {
-		_, ok := c.(SuperColumn)
-		if ok { // is a super column
-			minTimestamp := c.getMarkedForDeleteAt()
-			if minTimestamp < cf.getMarkedForDeleteAt() {
+	for cname, column := range cf.Columns {
+		_, ok := column.(SuperColumn)
+		if ok {
+			// 获取最小的删除时间戳：列族/超列/子列
+			minTimestamp := column.getMarkedForDeleteAt()
+			if minTimestamp > cf.getMarkedForDeleteAt() {
 				minTimestamp = cf.getMarkedForDeleteAt()
 			}
-			// create a new super column and add in the subcolumns
+
+			// 先删除，后面清理完毕后会添加回来
 			cf.remove(cname)
-			sc := c.(SuperColumn).cloneMeShallow()
-			for _, subColumn := range c.GetSubColumns() {
+			// 克隆超列，只添加有效子列
+			sc := column.(SuperColumn).cloneMeShallow()
+			for _, subColumn := range column.GetSubColumns() {
+				// 如果子列最近更新时间早于 minTimestamp 则直接丢弃。
 				if subColumn.timestamp() > minTimestamp {
+					// 如果子列被标记为删除并且删除时间早于 gcBefore ，则该子列会被丢弃，否则保留。
 					if !subColumn.isMarkedForDelete() || subColumn.getLocalDeletionTime() > gcBefore {
 						sc.addColumn(subColumn)
 					}
 				}
 			}
+			// 将清理完毕的超列添加回 cf ，其中只包含有效的子列
 			if len(sc.getSubColumns()) > 0 || sc.getLocalDeletionTime() > gcBefore {
 				cf.addColumn(sc)
 			}
-		} else if (c.isMarkedForDelete() && c.getLocalDeletionTime() <= gcBefore) ||
-			c.timestamp() <= cf.getMarkedForDeleteAt() {
+		} else if (column.isMarkedForDelete() && column.getLocalDeletionTime() <= gcBefore) || column.timestamp() <= cf.getMarkedForDeleteAt() {
+			// 对于普通列，如果它们已经标记为删除，并且删除时间早于 gcBefore，则该列会被从 ColumnFamily 中移除。
 			cf.remove(cname)
 		}
 	}
+
+	// 如果列族中所有列都被删除，并且列族的本地删除时间早于 gcBefore ，删除该列族
 	if cf.getColumnCount() == 0 && cf.getLocalDeletionTime() <= gcBefore {
 		return nil
 	}
@@ -530,33 +545,37 @@ func removeDeleted(cf *ColumnFamily, gcBefore int) *ColumnFamily {
 // if there are keys that occur in multiple files and are
 // the same then a resolution is done to get the latest data.
 func (c *ColumnFamilyStore) doFileCompaction(files []string, minBufferSize int) int {
-	// 计算传入的多个文件的总大小。
+	// 估算合并后的文件大小
 	expectedCompactedFileSize := getExpectedCompactedFileSize(files)
+	// 获取合并后的文件存放位置
 	compactionFileLocation := config.GetDataFileLocationForTable(c.tableName, expectedCompactedFileSize)
-	// if the compaction file path is empty, that means we have no space left for this compaction
+	// 如果没有足够空间存储压缩后的文件，选择删除一个最大的待合并文件，并重新尝试进行压缩。
 	if compactionFileLocation == "" {
 		maxFile := getMaxSizeFile(files)
 		removeFromList(files, maxFile)
-		c.doFileCompaction(files, minBufferSize)
-		return 0
+		return c.doFileCompaction(files, minBufferSize)
 	}
 
-	newfile := ""
+	// 记录合并过程中的统计信息：耗时、读取字节数、写入字节数、读取和写入的键数。
 	startTime := time.Now().UnixNano() / int64(time.Millisecond)
 	totalBytesRead := int64(0)
 	totalBytesWritten := int64(0)
 	totalKeysRead := int64(0)
 	totalKeysWritten := int64(0)
+
+	// pq 中包含每个 sstable 的 row iterator ；该队列根据行键（row key）来排序，最小的键排在队首，优先读取。
 	pq := c.initPriorityQueue(files, nil, minBufferSize)
 	if pq.Len() == 0 {
 		log.Print("nothing to compact")
 		return 0
 	}
+
+	// 临时文件名
 	mergedFileName := c.getTmpFileName()
+	mergedFilePath := compactionFileLocation + string(os.PathSeparator) + mergedFileName
 	var writer *SSTableWriter
 	var ssTable *SSTableReader
-	lastkey := ""
-	lfs := make([]*FileStruct, 0)
+
 	bufOut := make([]byte, 0)
 	expectedBloomFilterSize := getApproximateKeyCount(files)
 	if expectedBloomFilterSize <= 0 {
@@ -566,81 +585,99 @@ func (c *ColumnFamilyStore) doFileCompaction(files []string, minBufferSize int) 
 	// create the bloom filter for the compacted file
 	// compactedBloomFilter := utils.NewBloomFilter(expectedBloomFilterSize, 15)
 	columnFamilies := make([]*ColumnFamily, 0)
+
+	newfile := ""
+	lastkey := ""
+	lfs := make([]*FileStruct, 0) // 存储具有相同行键的 FileStruct
 	for pq.Len() > 0 || len(lfs) > 0 {
+		// 取 row key 最小的 row iterator
 		var fs *FileStruct
 		if pq.Len() > 0 {
 			fs = pq.Pop().(*FileStruct)
 		}
+
+		// 把具有相同 row key 的 FileStruct 存入 lfs 列表中，一起处理。
 		if fs != nil && (lastkey == "" || lastkey == fs.key) {
-			// The keys are the same so we need to add this to
-			// the lfs list
 			lastkey = fs.key
 			lfs = append(lfs, fs)
 		} else {
-			sort.Sort(ByName(lfs))
-			var columnFamily *ColumnFamily
+			// 至此，要么 fs 为 nil ，要么 lastkey != fs.key ，此时需要处理 lfs ，而 fs 后面要返回到 pq 中。
+			sort.Sort(ByName(lfs)) // 基于 sstable 文件名进行排序，好像没啥用
 			bufOut = make([]byte, 0)
 			if len(lfs) > 1 {
-				for _, filestruct := range lfs {
-					// we want to add only 2 and resolve
-					// them right there in order to save
-					// on memory footprint
-					if len(columnFamilies) > 1 {
-						c.merge(columnFamilies)
-					}
-					// deserialize into column families
-					columnFamilies = append(columnFamilies, filestruct.getColumnFamily())
+				// 把具有相同 row key 的多个 cfs 合并成一个 cf
+				for _, st := range lfs {
+					/// 这个 if 有点难懂，看上去不会影响正常逻辑，只是提前合并，我先注释了。
+					//// we want to add only 2 and resolve them right there in order to save on memory footprint
+					//if len(columnFamilies) > 1 {
+					//	c.merge(columnFamilies)
+					//}
+					//// deserialize into column families
+					columnFamilies = append(columnFamilies, st.getColumnFamily())
 				}
-				// Now after merging, append to sstable
-				columnFamily = resolveAndRemoveDeleted(columnFamilies)
-				columnFamilies = make([]*ColumnFamily, 0)
-				if columnFamily != nil {
-					CFSerializer.serializeWithIndexes(columnFamily, bufOut)
+				merged := resolveAndRemoveDeleted(columnFamilies) // 合并多个列族，清理被删除的列
+				if merged != nil {                                // 合并后非空
+					CFSerializer.serializeWithIndexes(merged, bufOut) // 将合并后的列族序列化存入 bufOut 中
 				}
+				columnFamilies = make([]*ColumnFamily, 0) // 重置，便于下一轮合并
+
 			} else {
-				filestruct := lfs[0]
-				CFSerializer.serializeWithIndexes(filestruct.getColumnFamily(), bufOut)
+				// 如果 lfs 中只有一个文件，则直接获取它的列族并序列化。
+				CFSerializer.serializeWithIndexes(lfs[0].getColumnFamily(), bufOut)
 			}
+
+			// 将合并后的数据存储到新 SSTable 文件中，并更新写入键数。
 			if writer == nil {
-				// fname is the full path name!
-				fname := compactionFileLocation + string(os.PathSeparator) + mergedFileName
-				writer = NewSSTableWriter(fname, expectedBloomFilterSize)
+				writer = NewSSTableWriter(mergedFilePath, expectedBloomFilterSize)
 			}
 			writer.append(lastkey, bufOut)
 			totalKeysWritten++
+
+			// 遍历 lfs 中的每个文件，调用 advance(true) 让文件指针前进到下一个有效的行
 			for _, filestruct := range lfs {
-				filestruct.advance(true)
-				if filestruct.isExhausted() {
+				filestruct.advance(true)      // 让文件指针前进到下一个有效的行
+				if filestruct.isExhausted() { // 如果已经读完，不再加入 pq
 					continue
 				}
-				heap.Push(pq, filestruct)
-				totalKeysRead++
+				heap.Push(pq, filestruct) // 否则，推回优先队列 pq 中，继续读取剩余的数据行
+				totalKeysRead++           // 更新读取键数
 			}
+
+			// 清空 lfs 列表，准备下一轮
 			lfs = make([]*FileStruct, 0)
 			lastkey = ""
+
+			// 因为可能是 fs.key != lastkey 触发了 lfs 合并，此时 fs 没有被处理，需要放回 pq 中。
 			if fs != nil {
-				// add back the fs since we processed the
-				// rest of filestructs
+				// add back the fs since we processed the rest of filestructs
 				heap.Push(pq, fs)
 			}
 		}
 	}
+
+	// 完成合并，将新 sstable 刷盘
 	if writer != nil {
 		ssTable = writer.closeAndOpenReader()
 		newfile = writer.getFilename()
 	}
+
 	c.rwmu.Lock()
 	defer c.rwmu.Unlock()
-	for _, file := range files {
-		delete(c.ssTables, file)
-	}
+
+	// 将合并后新的 sstable 保存
 	if newfile != "" {
 		c.ssTables[newfile] = ssTable
 		totalBytesWritten += getFileSizeFromName(newfile)
 	}
+
+	// 将已合并的 sstable 删除
+	for _, file := range files {
+		delete(c.ssTables, file)
+	}
 	for _, file := range files {
 		getSSTableReader(file).delete()
 	}
+
 	log.Printf("Compacted to %v. %v/%v bytes for %v/%v keys read/written. Time: %vms.",
 		newfile, totalBytesRead, totalBytesWritten, totalKeysRead, totalKeysWritten,
 		time.Now().UnixNano()/int64(time.Millisecond)-startTime)
@@ -672,28 +709,34 @@ func (p ByName) Swap(i, j int) {
 	p[i], p[j] = p[j], p[i]
 }
 
+// 执行多个 SSTable 文件的压缩，以提高读取效率和减少存储空间
 func (c *ColumnFamilyStore) doCompaction() int {
-	// break the files into buckets and then compact
-	filesCompacted := 0
-	// c.rwmu.Lock()
-	// c.isCompacting = true
-	// c.rwmu.Unlock()
 	files := make([]string, 0)
-	for file := range c.ssTables {
+	for file, _ := range c.ssTables {
 		files = append(files, file)
 	}
+
+	// 把文件分桶，每桶包含大小接近的一些文件
 	buckets := c.stageOrderedCompaction(files)
+	// 逐个桶进行压缩
+	filesCompacted := 0
 	for _, fileList := range buckets {
+		// 桶中的文件数小于阈值，不需压缩
 		if len(fileList) < config.MinCompactionThres {
 			continue
 		}
+		// 按照序号对文件名排序
 		sort.Sort(ByFileName(fileList))
-		files = make([]string, 0)
-		count := 0
+
+		// 一次最多压缩 mark 个文件
 		mark := len(fileList)
-		if config.MaxCompactionThres < mark {
+		if mark > config.MaxCompactionThres {
 			mark = config.MaxCompactionThres
 		}
+
+		// 把需要压缩的文件名提取出来
+		count := 0
+		files = make([]string, 0)
 		for _, file := range fileList {
 			files = append(files, file)
 			count++
@@ -701,11 +744,11 @@ func (c *ColumnFamilyStore) doCompaction() int {
 				break
 			}
 		}
+
+		// 执行压缩
 		filesCompacted += c.doFileCompaction(files, c.bufSize)
 	}
-	// c.rwmu.Lock()
-	// c.isCompacting = false
-	// c.rwmu.Unlock()
+
 	return filesCompacted
 }
 
@@ -753,7 +796,7 @@ func (c *ColumnFamilyStore) getColumnFamilyGC(filter QueryFilter, gcBefore int) 
 		c.readStats = append(c.readStats, getCurrentTimeInMillis()-start)
 	}
 
-	// 查询内存表（Memtable）中的数据，内存表是一个内存中的数据结构，它包含了最近更新的数据。
+	/// 1. 先从 c.memtable 中查询
 
 	// we are querying top-level, do a merging fetch with indices
 	c.rwmu.RLock()
@@ -764,15 +807,13 @@ func (c *ColumnFamilyStore) getColumnFamilyGC(filter QueryFilter, gcBefore int) 
 	// 获取内存表的列族数据
 	iter := filter.getMemColumnIterator(c.memtable)
 	spew.Printf("\titer: %#+v\n\n", iter)
-	// 获取列族数据
+	// 存储 row 的所有列，用于返回
 	returnCF := iter.getColumnFamily()
 	spew.Printf("\treturnCF: %#+v\n\n", returnCF)
 	// return returnCF
 	iterators = append(iterators, iter)
 
-	// 除了内存表，我们还需要考虑那些还没被写入磁盘的内存数据（称为 "未刷新内存表"）。
-	// 这些数据还在内存中，但有些已经写入了磁盘，未刷新是指这些数据还没完全持久化。
-	// 将这些数据添加到 iterators 列表中，用于后续的合并。
+	/// 2. 从还没被写入磁盘的 Memtables 中读取
 
 	// add the memtable being flushed
 	memtables := getUnflushedMemtables(filter.getPath().ColumnFamilyName)
@@ -782,27 +823,24 @@ func (c *ColumnFamilyStore) getColumnFamilyGC(filter QueryFilter, gcBefore int) 
 		iterators = append(iterators, iter)
 	}
 
-	// 处理磁盘上的 SSTable ，SSTable 是存储在磁盘上的数据文件。
+	/// 3. 从磁盘上的 SSTable 上读取
 
 	// add the SSTables on disk
 	sstables := make([]*SSTableReader, 0)
 	for _, sstable := range c.ssTables {
-		// 遍历磁盘上的 SSTable，并通过 getSSTableColumnIterator 获取 SSTable 中的列族数据。
-		// 合并这些 SSTable 中的数据，并加入到 iterators 列表中。
 		sstables = append(sstables, sstable)
-		iter = filter.getSSTableColumnIterator(sstable)
-		if iter.hasNext() { // initializes iter.CF
-			returnCF.deleteCF(iter.getColumnFamily())
+		iter = filter.getSSTableColumnIterator(sstable) // 用于遍历 filter.key 在 SSTable 中的列，内部会把所有 col 从数据文件读取到内存中，然后迭代。
+		if iter.hasNext() {                             // initializes iter.CF
+			returnCF.deleteCF(iter.getColumnFamily()) // 更新 cf 删除时间
 		}
 		iterators = append(iterators, iter)
 	}
 
-	// 在获取了内存表、未刷新内存表、SSTable 中的所有数据后，我们需要合并它们。
-	// 为此，我们使用了一个 CollatedIterator 来合并这些列族数据。
+	// 获取了内存表、未刷新内存表、SSTable 中的所有数据后，使用 CollatedIterator 来合并数据。
 	collated := NewCollatedIterator(iterators)
 	// 据查询过滤器进一步处理这些合并的数据，特别是执行垃圾回收（删除已经标记为删除的列）。
 	filter.collectCollatedColumns(returnCF, collated, gcBefore)
-	// 根据垃圾回收时间（gcBefore），删除所有在该时间之前被标记为删除的列。
+	// 根据垃圾回收时间戳 (gcBefore) 从 returnCF 中删除已标记为删除的列。
 	res := removeDeleted(returnCF, gcBefore)
 	// 关闭所有用来查询列族的迭代器。
 	for _, ci := range iterators {
@@ -812,7 +850,6 @@ func (c *ColumnFamilyStore) getColumnFamilyGC(filter QueryFilter, gcBefore int) 
 	c.readStats = append(c.readStats, getCurrentTimeInMillis()-start)
 	// 返回结果
 	return res
-	// return iter.getColumnFamily()
 }
 
 func getUnflushedMemtables(cfName string) []*Memtable {
@@ -830,6 +867,7 @@ func getMemtablePendingFlushNotNull(columnFamilyName string) []*Memtable {
 	return memtables
 }
 
+// 当前时间减去 10 天对应的时间戳(秒)，表示垃圾回收 10 天前的数据。
 func getDefaultGCBefore() int {
 	curTime := time.Now().UnixNano() / int64(time.Second)
 	return int(curTime - int64(config.GcGraceInSeconds))
@@ -932,6 +970,7 @@ func (c *ColumnFamilyStore) onMemtableFlush(cLogCtx *CommitLogContext) {
 	}
 }
 
+// 本函数将该 SSTable 文件 Reader 缓存到 c.ssTables 中，这样可以提高读取效率。
 func (c *ColumnFamilyStore) storeLocation(sstable *SSTableReader) {
 	// Called after the memtable flushes its inmemory data.
 	// This information is cached in the ColumnFamilyStore.
@@ -944,6 +983,7 @@ func (c *ColumnFamilyStore) storeLocation(sstable *SSTableReader) {
 	c.ssTables[sstable.getFilename()] = sstable
 	ssTableCount := len(c.ssTables)
 	c.sstableMu.Unlock()
+
 	// it's ok if compaction gets submitted multiple times
 	// while one is already in process. worst that happens
 	// is, compactor will count the sstable files and decide

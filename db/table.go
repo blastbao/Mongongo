@@ -19,14 +19,14 @@ import (
 var (
 	tableInstances   = map[string]*Table{}
 	tableMetadataMap = map[string]*TableMetadata{}
-	idCFMap          = map[int]string{}
+	idCFMap          = map[int]string{} // 列族 ID => 列族名
 	tCreateLock      sync.Mutex
 )
 
 // Table ...
 type Table struct {
-	tableMetadata      *TableMetadata
 	tableName          string
+	tableMetadata      *TableMetadata
 	columnFamilyStores map[string]*ColumnFamilyStore
 }
 
@@ -55,7 +55,7 @@ func NewTable(tableName string) *Table {
 	t.tableName = tableName
 	t.tableMetadata = getTableMetadataInstance(t.tableName) // 获取该表的元数据（包括列族信息）。
 	t.columnFamilyStores = make(map[string]*ColumnFamilyStore)
-	cfIDMap := t.tableMetadata.cfIDMap
+	cfIDMap := t.tableMetadata.cfIDs
 	for columnFamily := range cfIDMap {
 		// 为每个列族创建一个 ColumnFamilyStore 实例，负责列族的数据管理。
 		t.columnFamilyStores[columnFamily] = NewColumnFamilyStore(tableName, columnFamily)
@@ -88,7 +88,7 @@ func (t *Table) getCF(key, cfName string) *ColumnFamily {
 }
 
 func (t *Table) getColumnFamilies() map[string]int {
-	return t.tableMetadata.cfIDMap
+	return t.tableMetadata.cfIDs
 }
 
 func (t *Table) getColumnFamilyStore(cfName string) *ColumnFamilyStore {
@@ -142,9 +142,9 @@ func (t *Table) loadTableMetadata(fileName string) {
 }
 
 func (t *Table) onStart() {
-	cfIDMap := t.tableMetadata.cfIDMap
-	for columnFamily := range cfIDMap {
-		cfStore := t.columnFamilyStores[columnFamily]
+	cfs := t.tableMetadata.cfIDs
+	for cf := range cfs {
+		cfStore := t.columnFamilyStores[cf]
 		cfStore.onStart()
 	}
 }
