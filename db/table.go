@@ -50,41 +50,34 @@ func getColumnFamilyCount() int {
 }
 
 // NewTable create a Table
-func NewTable(tableName string) *Table {
+func NewTable(table string) *Table {
 	t := &Table{}
-	t.tableName = tableName
-	t.tableMetadata = getTableMetadataInstance(t.tableName) // 获取该表的元数据（包括列族信息）。
+	t.tableName = table
+	t.tableMetadata = getTableMetadataInstance(t.tableName) // 获取该表的元数据（包含列族信息）
 	t.columnFamilyStores = make(map[string]*ColumnFamilyStore)
-	cfIDMap := t.tableMetadata.cfIDs
-	for columnFamily := range cfIDMap {
-		// 为每个列族创建一个 ColumnFamilyStore 实例，负责列族的数据管理。
-		t.columnFamilyStores[columnFamily] = NewColumnFamilyStore(tableName, columnFamily)
+	for cf := range t.tableMetadata.cfIDs {
+		t.columnFamilyStores[cf] = NewColumnFamilyStore(table, cf) // 为每个列族创建一个 ColumnFamilyStore 实例，负责列族的数据管理。
 	}
 	return t
 }
 
 func (t *Table) get(key string) *Row {
-	// 创建一个行对象
-	row := NewRowT(t.tableName, key)
-	// 遍历表中的所有列族
-	for columnFamily := range t.getColumnFamilies() {
-		// 获取列族数据
-		cf := t.getCF(key, columnFamily)
-		if cf != nil {
-			// 将该列族的数据添加到当前行中
-			row.addColumnFamily(cf)
+	row := NewRowT(t.tableName, key)                  // 创建一个行，它可能包含多个列族
+	for columnFamily := range t.getColumnFamilies() { // 遍历表的所有列族
+		if cf := t.getCF(key, columnFamily); cf != nil { // 获取 row 每个列族的数据
+			row.addColumnFamily(cf) // 将列族数据添加到行中
 		}
 	}
-	// 返回构建好的行数据
 	return row
 }
 
 func (t *Table) getCF(key, cfName string) *ColumnFamily {
-	cfStore, ok := t.columnFamilyStores[cfName]
+	cfStore, ok := t.columnFamilyStores[cfName] // 获取列族存储
 	if ok == false {
 		log.Fatal("Column family" + cfName + " has not been defined")
 	}
-	return cfStore.getColumnFamily(NewIdentityQueryFilter(key, NewQueryPathCF(cfName)))
+	queryFilter := NewIdentityQueryFilter(key, NewQueryPathCF(cfName)) // 查询过滤器
+	return cfStore.getColumnFamily(queryFilter)                        // 查询列族数据
 }
 
 func (t *Table) getColumnFamilies() map[string]int {
@@ -163,16 +156,15 @@ func (t *Table) getNumberOfColumnFamilies() int {
 //
 // [重要]
 func (t *Table) apply(row *Row) {
-	key := row.Key
 	start := time.Now().UnixNano() / int64(time.Millisecond)
 	spew.Printf("table: %v \n -- table: %+v\n", t, t)
 	log.Printf("size: %v\n", t.tableMetadata.getSize())
-	// 先将行数据写入到提交日志
+	// 写入提交日志
 	cmtLogCtx := openCommitLogE().add(row)
-	// 然后将数据写入到对应的列族存储
+	// 写入列族存储
 	for cfName, columnFamily := range row.ColumnFamilies {
 		cfStore := t.columnFamilyStores[cfName]
-		cfStore.apply(key, columnFamily, cmtLogCtx)
+		cfStore.apply(row.Key, columnFamily, cmtLogCtx)
 	}
 	timeTaken := time.Now().UnixNano()/int64(time.Millisecond) - start
 	log.Printf("table.apply(row) took %v ms\n", timeTaken)

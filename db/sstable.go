@@ -627,11 +627,11 @@ func (s *SSTable) closeByte(footer []byte, size int) {
 
 // 获取当前文件指针的位置
 func getCurrentPos(file *os.File) int64 {
-	res, err := file.Seek(0, io.SeekCurrent)
+	pos, err := file.Seek(0, io.SeekCurrent)
 	if err != nil {
 		log.Fatal(err) // 如果发生错误，程序会退出并打印错误信息
 	}
-	return res
+	return pos
 }
 
 // BlockMetadata ...

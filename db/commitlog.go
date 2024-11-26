@@ -52,8 +52,8 @@ type CommitLog struct {
 
 var (
 	clInstance  = map[string]*CommitLog{}
-	clSInstance *CommitLog // stands for Single Instance
-	clHeaders   = map[string]*CommitLogHeader{}
+	clSInstance *CommitLog                      // stands for Single Instance
+	clHeaders   = map[string]*CommitLogHeader{} // clHeaders 是一个全局缓存，保存了不同日志文件的提交日志头。
 	clmu        sync.Mutex
 )
 
@@ -100,10 +100,14 @@ func (c *CommitLog) writeCommitLogHeader() {
 	// writes a header with all bits set to zero
 	// table := OpenTable(c.table)
 	// cfSize := table.getNumberOfColumnFamilies() // number of cf
+
+	// 当前表的列族数
 	cfSize := getColumnFamilyCount()
+	// 从文件开头开始写入
 	c.commitHeaderStartPos = 0
-	// write the commit log header
+	// 构造 header
 	c.clHeader = NewCommitLogHeader(cfSize)
+	// 写入 header
 	c.writeCLH(c.clHeader.toByteArray(), false)
 }
 
@@ -115,8 +119,7 @@ func (c *CommitLog) writeCommitLogHeaderB(bytes []byte, reset bool) {
 	}
 	currentPos += c.commitHeaderStartPos
 	// write the commit log header
-	_, err = c.logWriter.Write(bytes)
-	if err != nil {
+	if _, err = c.logWriter.Write(bytes); err != nil {
 		log.Print(err)
 	}
 	if reset {
@@ -205,22 +208,21 @@ func (c *CommitLog) maybeUpdateHeader(row *Row) {
 	// new column family is encountered for the
 	// first time
 	table := OpenTable(row.Table)
-	for cfName := range row.getColumnFamilies() {
-		id := table.getColumnFamilyID(cfName)
+	for cf := range row.getColumnFamilies() {
+		id := table.getColumnFamilyID(cf)
 		if c.clHeader.isDirty(id) == false {
 			c.clHeader.turnOn(id, getCurrentPos(c.logWriter))
-			c.seekAndWriteCommitLogHeader(c.clHeader.toByteArray())
+			c.seekAndWriteCommitLogHeader(c.clHeader.toByteArray()) // 将 clHeader 写入到 commit log 文件头部
 		}
 	}
 }
 
 func (c *CommitLog) seekAndWriteCommitLogHeader(bytes []byte) {
-	// writes header at the beginning of the file, then seeks
-	// back to current position
-	currentPos := getCurrentPos(c.logWriter)
-	c.logWriter.Seek(0, 0)
-	writeCommitLogHeader(c.logWriter, bytes)
-	c.logWriter.Seek(currentPos, 0)
+	// writes header at the beginning of the file, then seeks back to current position
+	currentPos := getCurrentPos(c.logWriter) // 暂存当前位置
+	c.logWriter.Seek(0, 0)                   // 将文件指针定位到头部
+	writeCommitLogHeader(c.logWriter, bytes) // 将 bytes 写入到头部
+	c.logWriter.Seek(currentPos, 0)          //  将文件指针恢复到之前
 }
 
 func writeCommitLogHeader(logWriter *os.File, bytes []byte) {
@@ -241,9 +243,10 @@ func (c *CommitLog) maybeRollLog() bool {
 		// 创建并打开新的日志文件
 		c.logWriter = createCLWriter(c.logFile)
 		// squirrel away the old commit log header
-		// ???
-		clHeaders[oldLogFile] = NewCommitLogHeaderC(c.clHeader) // 保存当前提交日志的头信息
-		c.clHeader.clear()                                      // 清空当前日志头信息
+		// 把 c/clHeader 拷贝一下，存储到 chHeaders 中
+		clHeaders[oldLogFile] = NewCommitLogHeaderC(c.clHeader)
+		// 清空
+		c.clHeader.clear()
 		// 写入新的日志头信息
 		writeCommitLogHeader(c.logWriter, c.clHeader.toByteArray())
 		return true
@@ -259,13 +262,14 @@ func (c *CommitLog) maybeRollLog() bool {
 //
 // 向提交日志中添加一个新的行
 func (c *CommitLog) add(row *Row) *CommitLogContext {
-	// 将传入的 row 对象序列化成字节数组
+	// 序列化
 	buf := make([]byte, 0)
 	rowSerialize(row, buf)
-	// 获取 log 当前写入位置，创建 CommitLogContext
+	// 获取当前写入位置，创建 CommitLogContext
 	pos := getCurrentPos(c.logWriter)
 	logCtx := NewCommitLogContext(c.logFile, pos)
-	// 检查当前 row 的某个列族是否是第一次写入，如果是，会更新头
+
+	// 更新 commit log 头，记录各个 cf 的写入（是否更新，是否落盘）
 	c.maybeUpdateHeader(row)
 	// 写入 row 数据长度
 	writeInt64(c.logWriter, int64(len(buf)))
@@ -273,6 +277,7 @@ func (c *CommitLog) add(row *Row) *CommitLogContext {
 	writeBytes(c.logWriter, buf)
 	// 检查当前日志文件是否已经超过了设定的大小阈值。如果超过了阈值，就会触发日志文件的滚动（即创建一个新的日志文件，继续写入）。
 	c.maybeRollLog()
+
 	// 返回 CommitLogContext
 	return logCtx
 }
@@ -428,8 +433,8 @@ func (c *CommitLog) onMemtableFlush(tableName, cf string, cLogCtx *CommitLogCont
 	// in the header and this is used to decide if the log
 	// file can be deleted.
 	table := OpenTable(tableName)
-	id := table.tableMetadata.cfIDs[cf]
-	c.discard(cLogCtx, id)
+	cfID := table.tableMetadata.cfIDs[cf]
+	c.discard(cLogCtx, cfID)
 }
 
 // ByTime provide struct to sort file by timestamp
@@ -450,6 +455,7 @@ func (a ByTime) Swap(i, j int) {
 	a[i], a[j] = a[j], a[i]
 }
 
+// /path/to/logs/CommitLog-1616175872123.log => 1616175872123
 func getCreationTime(name string) int64 {
 	arr := strings.FieldsFunc(name, func(r rune) bool {
 		return r == '-' || r == '.'
@@ -461,14 +467,17 @@ func getCreationTime(name string) int64 {
 	return num
 }
 
-// updateDeleteTime log segments whose contents have
-// been turned into SSTables
+// updateDeleteTime log segments whose contents have been turned into SSTables.
+// 检查并删除那些已经不再需要的旧日志文件，确保系统只保留必要的日志文件。
 func (c *CommitLog) discard(cLogCtx *CommitLogContext, id int) {
+
+	/// 1. 查找日志头
+
 	// Check if old commit logs can be deleted.
 	// 查找当前提交日志文件（cLogCtx.file）的日志头
 	header, ok := clHeaders[cLogCtx.file]
 	if !ok {
-		// 如果当前正在处理的文件是 c.logFile ，即当前提交日志文件，则使用 c.clHeader 作为日志头，并将其缓存到 clHeaders 中。
+		// 处理当前日志文件
 		if c.logFile == cLogCtx.file {
 			// we are dealing with the current commit log
 			header = c.clHeader
@@ -478,10 +487,7 @@ func (c *CommitLog) discard(cLogCtx *CommitLogContext, id int) {
 		}
 	}
 
-	//
-	// commitLogHeader.turnOff(id)
-
-	// 获取所有历史日志文件的列表并将其存储在 oldFiles 中，按时间排序。
+	// 获取所有历史日志文件并按时间排序
 	oldFiles := make([]string, 0)
 	for key := range clHeaders {
 		oldFiles = append(oldFiles, key)
@@ -496,6 +502,8 @@ func (c *CommitLog) discard(cLogCtx *CommitLogContext, id int) {
 	// file in the context in our list of old commit log files
 	// then we update the header and write it back to the commit
 	// log.
+	//
+	// 遍历所有历史提交日志文件
 	for _, oldFile := range oldFiles {
 		if oldFile == cLogCtx.file {
 			// Need to turn on again. Because we always keep

@@ -72,10 +72,10 @@ func (m *Memtable) put(key string, columnFamily *ColumnFamily) {
 
 // 如果 Memtable 中已经存在指定 key 的列族（ColumnFamily），则更新这个列族；如果不存在，则将新的列族数据添加到 Memtable 中。
 func (m *Memtable) runResolve(key string, newcf *ColumnFamily) {
-	// 检查 Memtable 中是否已经存在该 key 对应的列族
+	// 检查 Memtable 中是否已经存在 key
 	cf, ok := m.columnFamilies[key]
 	if ok {
-		// 如果 Memtable 中存在该 key 的列族，进行合并，根据时间戳决定相同的列留谁
+		// 如果存在进行合并，根据时间戳决定相同的列留谁
 		oldSize := cf.size
 		oldColCount := cf.getColumnCount()
 		cf.addColumns(newcf) // 把 newcf 中的 column 添加到 cf 中，如果有相同 column 根据优先级(timestamp)决定保留谁。
@@ -85,7 +85,7 @@ func (m *Memtable) runResolve(key string, newcf *ColumnFamily) {
 		m.resolveCount(oldColCount, newColCount) // 更新 m.currentObjectCnt
 		cf.deleteCF(newcf)                       // 合并 cf.localDeletionTime, cf.markedForDeleteAt 并更新
 	} else {
-		// 如果 Memtable 中没有该 key 的列族，则直接保存新列族
+		// 否则，直接保存新列族
 		m.columnFamilies[key] = *newcf
 		atomic.AddInt32(&m.currentSize, newcf.size+int32(len(key)))         // 更新 m.currentSize
 		atomic.AddInt32(&m.currentObjectCnt, int32(newcf.getColumnCount())) // 更新 m.currentObjectCnt
@@ -130,11 +130,11 @@ func (m *Memtable) flush(cLogCtx *CommitLogContext) {
 		writer.append(key, buf)
 	}
 
-	// 5. 完成写入并获取 SSTable 文件读取器
+	// 5. 完成写入并获取读取器
 	reader := writer.closeAndOpenReader()
 	// 6. 通知列族存储 Memtable 已经被刷新
 	cfStore.onMemtableFlush(cLogCtx)
-	// 7. 存储该 SSTable 文件的位置
+	// 7. 缓存该 SSTable 的 reader ，避免重复打开
 	cfStore.storeLocation(reader)
 	// 8. 设置 Memtable 为已刷新状态
 	m.isFlushed = true

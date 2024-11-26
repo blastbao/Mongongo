@@ -120,7 +120,7 @@ func NewSSTableNamesIterator(sstable *SSTableReader, key string, columns [][]byt
 			column := cf.getColumnSerializer().deserialize(file)
 			// we check vs the origin list, not the filtered list for efficiency
 			if containsC(columns, column.getName()) {
-				cf.addColumn(column)
+				cf.addColumn(column) // 如果 cf 中已有同名 column ，根据优先级(timestamp)决定保留谁。
 			}
 		}
 	}

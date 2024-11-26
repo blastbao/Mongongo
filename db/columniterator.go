@@ -5,7 +5,7 @@
 
 package db
 
-// 当一个列族包含多个列时，使用 ColumnIterator 可以顺序访问这些列数据；
+// 当某个 row 的一个列族包含多个列时，使用 ColumnIterator 可以顺序访问这些列值；
 
 // ColumnIterator ...
 type ColumnIterator interface {

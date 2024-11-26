@@ -122,7 +122,6 @@ func (c *ColumnIndexer) doIndexing(columns []IColumn, dos []byte) {
 	}
 
 	// the last column may have fallen on an index boundary already. if not, index it explicitly.
-	//
 	// 在循环结束后，如果 indexList 中没有索引，或者最后一列已经超出了索引边界，则手动创建一个新的索引并添加到 indexList。
 	if len(indexList) == 0 || string(indexList[len(indexList)-1].lastName) != column.getName() {
 		cIndexInfo := NewIndexInfo(

@@ -288,8 +288,7 @@ func (mg *Mongongo) multigeteInternal(table string, keys []string, columnPath Co
 			if column.IsMarkedForDelete() {
 				c = ColumnOrSuperColumn{}
 			} else {
-				nc := db.NewColumn(column.GetName(), string(column.GetValue()),
-					column.GetTimestamp(), false)
+				nc := db.NewColumn(column.GetName(), string(column.GetValue()), column.GetTimestamp(), false)
 				c = NewColumnOrSuperColumn(&nc, nil)
 			}
 		}

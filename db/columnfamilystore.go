@@ -520,7 +520,7 @@ func removeDeleted(cf *ColumnFamily, gcBefore int) *ColumnFamily {
 			}
 			// 将清理完毕的超列添加回 cf ，其中只包含有效的子列
 			if len(sc.getSubColumns()) > 0 || sc.getLocalDeletionTime() > gcBefore {
-				cf.addColumn(sc)
+				cf.addColumn(sc) // 如果 cf 中已有同名 column ，根据优先级(timestamp)决定保留谁。
 			}
 		} else if (column.isMarkedForDelete() && column.getLocalDeletionTime() <= gcBefore) || column.timestamp() <= cf.getMarkedForDeleteAt() {
 			// 对于普通列，如果它们已经标记为删除，并且删除时间早于 gcBefore，则该列会被从 ColumnFamily 中移除。
@@ -761,12 +761,6 @@ func getCurrentTimeInMillis() int64 {
 // 参数：
 //   - filter: 指定查询条件，可以是基于列名范围、列族名、超列名等过滤条件。
 //   - gcBefore: 垃圾回收时间戳，表示所有在该时间戳之前被删除的列将被清除（不可回收的列会被移除）。
-//
-//
-// 如果查询的条件包含超列（例如，一个列族下有多个子列），就会先查询超列，确保能够拿到超列中的数据。
-// 这里如果存在超列，使用一个 NameQueryFilter 来过滤和获取超列数据。
-//
-
 func (c *ColumnFamilyStore) getColumnFamilyGC(filter QueryFilter, gcBefore int) *ColumnFamily {
 	// get a list of columns starting from a given column, in a specified order
 	// only the latest version of a column is returned
@@ -836,6 +830,8 @@ func (c *ColumnFamilyStore) getColumnFamilyGC(filter QueryFilter, gcBefore int) 
 		iterators = append(iterators, iter)
 	}
 
+	/// 4. 合并查询
+
 	// 获取了内存表、未刷新内存表、SSTable 中的所有数据后，使用 CollatedIterator 来合并数据。
 	collated := NewCollatedIterator(iterators)
 	// 据查询过滤器进一步处理这些合并的数据，特别是执行垃圾回收（删除已经标记为删除的列）。
@@ -846,9 +842,8 @@ func (c *ColumnFamilyStore) getColumnFamilyGC(filter QueryFilter, gcBefore int) 
 	for _, ci := range iterators {
 		ci.close()
 	}
-	// 耗时统计
+
 	c.readStats = append(c.readStats, getCurrentTimeInMillis()-start)
-	// 返回结果
 	return res
 }
 
@@ -883,15 +878,12 @@ func (c *ColumnFamilyStore) apply(key string, columnFamily *ColumnFamily, cLogCt
 	initialMemtable := c.getMemtableThreadSafe()
 	// 2. 检查 Memtable 是否超过阈值，若超过把当前 memtable 落盘然后新建一个 memtable
 	if initialMemtable.isThresholdViolated() {
-		// [重要]
 		c.switchMemtableN(initialMemtable, cLogCtx)
 	}
-	// 3. 锁定 Memtable 操作，确保线程安全
+	// 3. 将数据写入 Memtable
 	c.memMu.Lock()
 	defer c.memMu.Unlock()
-	// 4. 将数据写入 Memtable
 	c.memtable.put(key, columnFamily)
-	// 5. 记录写操作的耗时
 	c.writeStates = append(c.writeStates, getCurrentTimeInMillis()-start)
 }
 
@@ -900,18 +892,6 @@ func (c *ColumnFamilyStore) getMemtableThreadSafe() *Memtable {
 	defer c.memMu.RUnlock()
 	return c.memtable
 }
-
-// func (c *ColumnFamilyStore) switchMemtable(key string, columnFamily *ColumnFamily, cLogCtx *CommitLogContext) {
-// 	// Used on start up when we are recovering from logs
-// 	c.memtable.mu.Lock()
-// 	c.memtable = NewMemtable(c.tableName, c.columnFamilyName)
-// 	c.memtable.mu.Unlock()
-// 	if key != c.memtable.flushKey {
-// 		c.memtable.mu.Lock()
-// 		c.memtable.put(key, columnFamily, cLogCtx)
-// 		c.memtable.mu.Unlock()
-// 	}
-// }
 
 func (c *ColumnFamilyStore) switchMemtableN(memtable *Memtable, ctx *CommitLogContext) {
 	c.memMu.Lock()
@@ -945,8 +925,7 @@ func (c *ColumnFamilyStore) getNextFileName() string {
 	// increment twice to generate non-consecutive numbers
 	atomic.AddInt32(&c.fileIdxGenerator, 1)
 	atomic.AddInt32(&c.fileIdxGenerator, 1)
-	name := c.tableName + "-" + c.columnFamilyName + "-" +
-		strconv.Itoa(int(c.fileIdxGenerator))
+	name := c.tableName + "-" + c.columnFamilyName + "-" + strconv.Itoa(int(c.fileIdxGenerator))
 	return name
 }
 
