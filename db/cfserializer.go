@@ -28,7 +28,7 @@ func NewCFSerializer() *ColumnFamilySerializer {
 func (c *ColumnFamilySerializer) serialize(cf *ColumnFamily, dos []byte) {
 	writeStringB(dos, cf.ColumnFamilyName) // 列族名
 	writeStringB(dos, cf.ColumnType)       // 列族类型
-	c.serializeForSSTable(cf, dos)         //
+	c.serializeForSSTable(cf, dos)         // 列族数据，包括一些标记位和各个列数据
 }
 
 func (c *ColumnFamilySerializer) deserializeFromSSTableNoColumns(cf *ColumnFamily, input *os.File) *ColumnFamily {
@@ -41,7 +41,7 @@ func (c *ColumnFamilySerializer) deserializeFromSSTableNoColumns(cf *ColumnFamil
 func (c *ColumnFamilySerializer) serializeWithIndexes(cf *ColumnFamily, dos []byte) {
 	// 对 cf 进行列排序、建立 bf 、建立列索引后，写入到 dos 中；
 	CIndexer.serialize(cf, dos)
-	// 将 cf 中的列逐个写入到 dos 中；
+	// 将 cf 的标记位以及列数据写入到 dos 中；
 	c.serializeForSSTable(cf, dos)
 }
 

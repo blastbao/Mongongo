@@ -56,6 +56,7 @@ func (r *RackStrategy) GetHintedStorageEndPoints(token string) map[network.EndPo
 }
 
 func (r *RackStrategy) getHintedMapForEndpoints(topN map[network.EndPoint]bool) map[network.EndPoint]network.EndPoint {
+	// 存储当前存活的所有端点。
 	liveList := make([]network.EndPoint, 0)
 	m := make(map[network.EndPoint]network.EndPoint)
 	for node := range topN {
@@ -63,10 +64,12 @@ func (r *RackStrategy) getHintedMapForEndpoints(topN map[network.EndPoint]bool) 
 			m[node] = node
 			liveList = append(liveList, node)
 		} else {
+
 			tList := make([]network.EndPoint, 0)
 			for k := range topN {
 				tList = append(tList, k)
 			}
+
 			endPoint, ok := r.getNextAvailableEndPoint(node, tList, liveList)
 			if ok {
 				m[endPoint] = node // map hinted node => origin node
@@ -79,8 +82,12 @@ func (r *RackStrategy) getHintedMapForEndpoints(topN map[network.EndPoint]bool) 
 	return m
 }
 
-func (r *RackStrategy) getNextAvailableEndPoint(startPoint network.EndPoint,
-	topN []network.EndPoint, liveNodes []network.EndPoint) (network.EndPoint, bool) {
+func (r *RackStrategy) getNextAvailableEndPoint(
+	startPoint network.EndPoint,
+	topN []network.EndPoint,
+	liveNodes []network.EndPoint,
+) (network.EndPoint, bool) {
+
 	tokenToEndPointMap := r.I.GetTokenEndPointMap()
 	tokens := make([]string, 0, len(tokenToEndPointMap))
 	for k := range tokenToEndPointMap {

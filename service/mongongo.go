@@ -47,12 +47,12 @@ func (mg *Mongongo) Start() {
 
 // InsertArgs ...
 type InsertArgs struct {
-	Table            string
-	Key              string
-	CPath            ColumnPath
-	Value            []byte
-	Timestamp        int64
-	ConsistencyLevel int
+	Table            string     // 表
+	Key              string     // 键
+	CPath            ColumnPath // 列
+	Value            []byte     // 值
+	Timestamp        int64      // 时间戳
+	ConsistencyLevel int        // 一致性级别
 }
 
 // InsertReply ...
@@ -63,15 +63,17 @@ type InsertReply struct {
 // Insert is an rpc
 func (mg *Mongongo) Insert(args *InsertArgs, reply *InsertReply) error {
 	log.Printf("enter mg.Insert\n")
+	// 参数解析
 	table := args.Table
 	key := args.Key
 	columnPath := args.CPath
 	value := args.Value
 	timestamp := args.Timestamp
 	consistencyLevel := args.ConsistencyLevel
+	// 构造 Mutation
 	rm := db.NewRowMutation(table, key)
-	rm.AddQ(db.NewQueryPath(columnPath.ColumnFamily, columnPath.SuperColumn, columnPath.Column),
-		value, timestamp)
+	rm.AddQ(db.NewQueryPath(columnPath.ColumnFamily, columnPath.SuperColumn, columnPath.Column), value, timestamp)
+	// 执行插入
 	mg.doInsert(consistencyLevel, rm)
 	reply.Result = "Success"
 	return nil
@@ -107,8 +109,8 @@ func (mg *Mongongo) GetSlice(args *GetSliceArgs, reply *GetSliceReply) error {
 	columnParent := args.ColumnParent
 	predicate := args.Predicate
 	consistencyLevel := args.ConsistencyLevel
-	reply.Columns = mg.multigetSliceInternal(keyspace, []string{key}, columnParent,
-		predicate, consistencyLevel)[key]
+
+	reply.Columns = mg.multigetSliceInternal(keyspace, []string{key}, columnParent, predicate, consistencyLevel)[key]
 	return nil
 }
 
@@ -118,14 +120,24 @@ func (mg *Mongongo) multigetSliceInternal(keyspace string, keys []string, column
 	sRange := predicate.SRange
 	if predicate.ColumnNames != nil {
 		for _, key := range keys {
-			commands = append(commands, db.NewSliceByNamesReadCommand(keyspace, key,
-				*db.NewQueryPath(columnParent.ColumnFamily, columnParent.SuperColumn, nil), predicate.ColumnNames))
+			commands = append(commands, db.NewSliceByNamesReadCommand(
+				keyspace,
+				key,
+				*db.NewQueryPath(columnParent.ColumnFamily, columnParent.SuperColumn, nil),
+				predicate.ColumnNames,
+			))
 		}
 	} else {
 		for _, key := range keys {
-			commands = append(commands, db.NewSliceFromReadCommand(keyspace, key,
+			commands = append(commands, db.NewSliceFromReadCommand(
+				keyspace,
+				key,
 				*db.NewQueryPath(columnParent.ColumnFamily, columnParent.SuperColumn, nil),
-				sRange.Start, sRange.Finish, sRange.Reversed, sRange.Count))
+				sRange.Start,
+				sRange.Finish,
+				sRange.Reversed,
+				sRange.Count,
+			))
 		}
 	}
 	return mg.getSlice(commands, consistencyLevel)
@@ -257,15 +269,19 @@ func (mg *Mongongo) Get(args *GetArgs, reply *GetReply) error {
 	key := args.Key
 	columnPath := args.ColumnPath
 	consistencyLevel := args.ConsistencyLevel
-	reply.Cosc = mg.multigeteInternal(keyspace, []string{key}, columnPath,
-		consistencyLevel)[key]
+	reply.Cosc = mg.multigeteInternal(keyspace, []string{key}, columnPath, consistencyLevel)[key]
 	return nil
 }
 
-func (mg *Mongongo) multigeteInternal(table string, keys []string, columnPath ColumnPath,
-	consistencyLevel int) map[string]ColumnOrSuperColumn {
-	path := db.NewQueryPath(columnPath.ColumnFamily, []byte(columnPath.SuperColumn),
-		[]byte(columnPath.Column))
+func (mg *Mongongo) multigeteInternal(
+	table string,
+	keys []string,
+	columnPath ColumnPath,
+	consistencyLevel int,
+) map[string]ColumnOrSuperColumn {
+
+	path := db.NewQueryPath(columnPath.ColumnFamily, []byte(columnPath.SuperColumn), []byte(columnPath.Column))
+
 	// assume without super column, just
 	// get table.cf['key']['column']
 	name := columnPath.Column
@@ -273,8 +289,10 @@ func (mg *Mongongo) multigeteInternal(table string, keys []string, columnPath Co
 	for _, key := range keys {
 		commands = append(commands, db.NewSliceByNamesReadCommand(table, key, *path, [][]byte{name}))
 	}
+
 	cfMap := make(map[string]ColumnOrSuperColumn)
 	columnsMap := mg.multigetColumns(commands, consistencyLevel)
+
 	for _, command := range commands {
 		columns := columnsMap[command.GetKey()]
 		var c ColumnOrSuperColumn

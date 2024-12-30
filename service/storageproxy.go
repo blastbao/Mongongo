@@ -35,24 +35,27 @@ type RowMutationReply struct {
 // possibility of a replica being down and
 // hint the data across to some other replica.
 func Insert(rm db.RowMutation) {
+	// 根据 RowKey 获取其归属的副本列表
 	endpointMap := GetInstance().getNStorageEndPointMap(rm.RowKey)
 	gob.Register(db.SuperColumnFactory{})
 	gob.Register(db.SuperColumn{})
+	// 并发向每个 endpoint 异步发送 RowMutation 请求
 	for endpoint := range endpointMap {
 		go func(end network.EndPoint) {
+			// 建立连接
 			c, err := rpc.DialHTTP("tcp", end.HostName+":"+end.Port)
 			defer c.Close()
 			if err != nil {
 				log.Fatal("dialing:", err)
 			}
+			// 构造请求/响应
 			args := RowMutationArgs{rm}
 			reply := RowMutationReply{}
-			err = c.Call("StorageService.DoRowMutation", &args, &reply)
-			if err != nil {
+			// 调用 rpc
+			if err = c.Call("StorageService.DoRowMutation", &args, &reply); err != nil {
 				log.Fatal("calling:", err)
 			}
-			fmt.Printf("DoRowMutation.Result for %v:%v: %+v\n",
-				end.HostName, end.Port, reply.Result)
+			fmt.Printf("DoRowMutation.Result for %v:%v: %+v\n", end.HostName, end.Port, reply.Result)
 		}(endpoint)
 	}
 	return
@@ -90,6 +93,12 @@ func insertBlocking(rm db.RowMutation, consistencyLevel int) {
 	// }
 }
 
+// 将 RowMutation 操作应用到所有副本节点上，在某些副本节点不可用时使用 hint 机制将数据发送到其他副本节点。
+//
+// 主要步骤：
+//   - 获取需要复制数据的 N 个节点。
+//   - 构建写入请求。
+//   - 数据发送到各个节点。
 func insert(rm db.RowMutation) {
 	log.Printf("enter insert ...")
 	// use this method to have this RowMutation applied
@@ -104,6 +113,10 @@ func insert(rm db.RowMutation) {
 	// startTime := utils.CurrentTimeMillis()
 	// this is the ZERO consistency level, so user doesn't
 	// care if we don't really have N destinations available.
+
+	// 获取需要存储数据的 N 个节点。
+	// getHintedStorageEndpointMap 方法根据行键（rm.RowKey）来确定应该将数据写入哪些副本。
+	// 如果某个副本不可用，可能会使用提示（hinting）机制，将数据“提示”到其他可用副本。
 	endpointMap := GetInstance().getHintedStorageEndpointMap(rm.RowKey)
 	messageMap := createWriteMessage(rm, endpointMap)
 	reply := db.RowMutationReply{}
@@ -111,10 +124,12 @@ func insert(rm db.RowMutation) {
 		utils.LoggerInstance().Printf("enter storageproxy.insert\n")
 		log.Printf("insert writing key %v to %v\n", rm.RowKey, endpoint)
 		to := endpoint
+		// connect
 		client, err := rpc.DialHTTP("tcp", to.HostName+":"+config.StoragePort)
 		if err != nil {
 			log.Fatal("dialing: ", err)
 		}
+		// call
 		err = client.Call("StorageService.DoRowMutation", &message, &reply)
 		if err != nil {
 			log.Print(err)
@@ -192,6 +207,12 @@ func remove(list []network.EndPoint, elem network.EndPoint) {
 	list = append(list[:idx], list[idx+1:]...)
 }
 
+// weakReadLocal 函数的目的是执行一个弱一致性的本地读取操作，执行流程：
+//   - 获取存活的副本：根据读取命令中的行键，获取与之关联的存活的副本节点列表，排除本地节点。
+//   - 从本地存储读取数据：首先尝试从本地存储读取数据，如果数据存在（非 nil），则直接返回该数据。
+//   - 从其他副本读取数据：如果本地没有数据，则会尝试从其他副本读取数据，直到找到有效的数据。
+//   - 一致性检查：如果从其他副本读取到数据，并且开启了配置中的一致性检查，函数会触发一致性检查和修复。
+//   - 返回结果：最终，函数会返回读取到的有效数据行。
 func weakReadLocal(commands []db.ReadCommand) []*db.Row {
 	// this function executes the read protocol locally
 	// and should be used only if consistency is not a
@@ -215,12 +236,14 @@ func weakReadLocal(commands []db.ReadCommand) []*db.Row {
 		if row != nil {
 			rows = append(rows, row)
 		}
+
 		// do the consistency checks in the background and return
 		// the not NILL row
 		if len(endpoints) > 0 && config.DoConsistencyCheck {
 			GetInstance().doConsistencyCheck(row, endpoints, command)
 		}
 	}
+
 	return rows
 }
 

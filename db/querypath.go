@@ -7,9 +7,9 @@ package db
 
 // QueryPath ...
 type QueryPath struct {
-	ColumnFamilyName string
-	SuperColumnName  []byte
-	ColumnName       []byte
+	ColumnFamilyName string // 列族
+	SuperColumnName  []byte // 超列
+	ColumnName       []byte // 列
 }
 
 // NewQueryPath ...

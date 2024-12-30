@@ -92,7 +92,7 @@ func (ss *StorageService) init() {
 }
 
 func (ss *StorageService) getNStorageEndPointMap(key string) map[network.EndPoint]network.EndPoint {
-	token := ss.partitioner.GetToken(key)
+	token := ss.partitioner.GetToken(key) // 根据 key 获取分区键
 	return ss.nodePicker.GetHintedStorageEndPoints(token)
 }
 

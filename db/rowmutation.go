@@ -56,6 +56,8 @@ func (rm *RowMutation) AddHints(key, host string) {
 }
 
 // AddQ ...
+//
+// 把统一列族的修改聚合存储，以便后续一起更新
 func (rm *RowMutation) AddQ(path *QueryPath, value []byte, timestamp int64) {
 	columnFamily := rm.Modification[path.ColumnFamilyName]
 	if columnFamily == nil {
