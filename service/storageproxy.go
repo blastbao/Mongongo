@@ -136,6 +136,7 @@ func insert(rm db.RowMutation) {
 		}
 		log.Printf("row mutation status for %v: %v\n", to, reply)
 	}
+
 }
 
 // WriteMessage ...

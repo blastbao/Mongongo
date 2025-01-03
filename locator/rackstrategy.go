@@ -61,15 +61,15 @@ func (r *RackStrategy) getHintedMapForEndpoints(topN map[network.EndPoint]bool) 
 	m := make(map[network.EndPoint]network.EndPoint)
 	for node := range topN {
 		if gms.GetFailureDetector().IsAlive(node) {
+			// 如果 node 活跃，将其保存到 liveList 中
 			m[node] = node
 			liveList = append(liveList, node)
 		} else {
-
+			// 如果 node 失效，选择一个 backup node
 			tList := make([]network.EndPoint, 0)
 			for k := range topN {
 				tList = append(tList, k)
 			}
-
 			endPoint, ok := r.getNextAvailableEndPoint(node, tList, liveList)
 			if ok {
 				m[endPoint] = node // map hinted node => origin node
@@ -77,40 +77,49 @@ func (r *RackStrategy) getHintedMapForEndpoints(topN map[network.EndPoint]bool) 
 			} else {
 				log.Printf("unable to find a live endpoint we might be out of live nodes\n")
 			}
+
 		}
 	}
 	return m
 }
 
+// 于在网络中查找下一个可用的端点。
 func (r *RackStrategy) getNextAvailableEndPoint(
 	startPoint network.EndPoint,
 	topN []network.EndPoint,
 	liveNodes []network.EndPoint,
 ) (network.EndPoint, bool) {
-
+	// 获取每个 token 与对应端点 (EndPoint) 的映射关系
 	tokenToEndPointMap := r.I.GetTokenEndPointMap()
+	// 对 tokens 进行排序
 	tokens := make([]string, 0, len(tokenToEndPointMap))
 	for k := range tokenToEndPointMap {
 		tokens = append(tokens, k)
 	}
 	sort.Strings(tokens)
+	// 获取 startPoint 的 token 在 tokens 中的下标 idx
 	token := r.I.GetToken(startPoint)
 	idx := sort.SearchStrings(tokens, token)
 	totalNodes := len(tokens)
 	if idx == totalNodes {
 		idx = 0
 	}
+	// 从 idx 开始，选择一个可用的 ep 并返回
 	startIdx := (idx + 1) % totalNodes
-	var endPoint network.EndPoint
-	flag := false
+	var endPoint network.EndPoint // 保存找到的可用节点
+	flag := false                 // 尚未找到可用节点
 	for i, count := startIdx, 1; count < totalNodes; count, i = count+1, (i+1)%totalNodes {
 		tmp := tokenToEndPointMap[tokens[i]]
-		if gms.GetFailureDetector().IsAlive(tmp) && !contains(topN, tmp) &&
-			!contains(liveNodes, tmp) {
-			endPoint = tmp
-			flag = true
-			break
+		if contains(topN, tmp) {
+			continue
 		}
+		if contains(liveNodes, tmp) {
+			continue
+		}
+		if !gms.GetFailureDetector().IsAlive(tmp) {
+			continue
+		}
+		endPoint, flag = tmp, true // 找到可用节点
 	}
 	return endPoint, flag
 }

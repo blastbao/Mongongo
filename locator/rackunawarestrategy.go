@@ -97,8 +97,12 @@ func (rus *RackUnawareStrategy) GetReadStorageEndPointsM(token string, tokenToEn
 	return res
 }
 
-func (rus *RackUnawareStrategy) getStorageTokens(token string, tokenToEndPointMap map[string]network.EndPoint,
-	bootStrapTokenToEndPointMap map[string]network.EndPoint) []string {
+func (rus *RackUnawareStrategy) getStorageTokens(
+	token string,
+	tokenToEndPointMap map[string]network.EndPoint,
+	bootStrapTokenToEndPointMap map[string]network.EndPoint,
+) []string {
+
 	var startIndex int
 	tokenList := make([]string, 0)
 	foundCnt := 0

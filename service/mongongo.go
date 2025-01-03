@@ -81,9 +81,9 @@ func (mg *Mongongo) Insert(args *InsertArgs, reply *InsertReply) error {
 
 func (mg *Mongongo) doInsert(consistencyLevel int, rm db.RowMutation) {
 	if consistencyLevel != 0 {
-		insertBlocking(rm, consistencyLevel)
+		insertBlocking(rm, consistencyLevel) // 尚未实现
 	} else {
-		insert(rm)
+		insert(rm) //
 	}
 }
 
